@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "modalitybench"
+version = "0.1.0"
+description = "A benchmark for DOM / observation-reduction techniques in agentic browser tasks."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "ModalityBench" }]
+dependencies = [
+    "anthropic>=0.40",
+    "pydantic>=2.6",
+    "typer>=0.12",
+    "rich>=13.7",
+    "lxml>=5.0",
+    "plotly>=5.20",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Live browser harness (MiniWoB++, Playwright). Heavy — install only when running live tasks.
+browser = [
+    "playwright>=1.44",
+    "browsergym-core>=0.7",
+    "browsergym-miniwob>=0.7",
+    "pillow>=10.0",
+]
+# Offline dataset loaders (Mind2Web).
+data = [
+    "datasets>=2.19",
+]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+mb = "modalitybench.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["modalitybench"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

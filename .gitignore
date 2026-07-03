@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ModalityBench outputs
+results/
+*.dashboard.html
+dashboard.html
+
+# HuggingFace / datasets cache (if pointed locally)
+.cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
