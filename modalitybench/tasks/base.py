@@ -62,6 +62,15 @@ class Episode:
 
 
 @dataclass
+class LiveOutcome:
+    """Result of applying one action to a live task environment."""
+
+    reward: float = 0.0
+    terminated: bool = False
+    info: str = ""
+
+
+@dataclass
 class TaskResult:
     """Scored outcome of an episode, produced by ``TaskSource.score``."""
 

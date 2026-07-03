@@ -33,14 +33,9 @@ console = Console()
 
 def _load_registry() -> None:
     """Import serializer/strategy packages so the registry is populated."""
-    try:
-        import modalitybench.observations.serializers  # noqa: F401
-    except ImportError:
-        pass
-    try:
-        import modalitybench.observations.strategies  # noqa: F401
-    except ImportError:
-        pass
+    from modalitybench.observations.loader import load_strategies
+
+    load_strategies()
 
 
 @app.command("list-strategies")

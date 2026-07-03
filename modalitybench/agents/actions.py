@@ -27,6 +27,7 @@ class Action:
     key: str | None = None
     url: str | None = None
     answer: str | None = None
+    query: str | None = None  # for tools-mode find()
     raw: dict[str, Any] | None = None  # original parsed payload, for logging
 
 
@@ -41,7 +42,16 @@ ACTION_SCHEMA: dict[str, str] = {
     "done": "done(answer): finish the episode, optionally returning an answer string",
 }
 
-_VALID_KINDS = set(ACTION_SCHEMA)
+# Meta-actions used only by tools-mode (query the page instead of dumping it). Handled by
+# the agent loop, never sent to the page.
+META_SCHEMA: dict[str, str] = {
+    "outline": "outline(): list the page's landmark sections",
+    "find": "find(query): search the page for elements matching a text/role query",
+    "read": "read(ref): read the full details of one element or section by ref",
+}
+
+_VALID_KINDS = set(ACTION_SCHEMA) | set(META_SCHEMA)
+META_KINDS = set(META_SCHEMA)
 
 
 class ActionParseError(ValueError):
@@ -83,6 +93,7 @@ def parse_action(payload: str | dict[str, Any]) -> Action:
         key=_as_str(args.get("key")),
         url=_as_str(args.get("url")),
         answer=_as_str(args.get("answer")),
+        query=_as_str(args.get("query")),
         raw=data,
     )
 

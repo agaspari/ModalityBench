@@ -1,0 +1,25 @@
+# Live MiniWoB++ smoke run across a few observation strategies with Claude Opus 4.8.
+#
+# Prerequisites:
+#   pip install 'modalitybench[browser]'
+#   playwright install chromium
+#   export MINIWOB_URL='file:///abs/path/to/miniwob-plusplus/miniwob/html/miniwob/'
+#   export ANTHROPIC_API_KEY=...   (or `ant auth login`)
+#
+# Compares a compact text serializer, a screenshot, salience, and tools-mode on the same
+# tasks so you can see the token/success trade-off live.
+run_id: miniwob-smoke
+strategies: [afus, flat_elements, screenshot_50pct, salience_flat, tools_mode]
+models:
+  - name: claude-opus-4-8
+    max_tokens: 2048
+    thinking: true
+    effort: medium
+tasks:
+  source: miniwob
+  options:
+    tasks: [click-test, click-button, focus-text, enter-text]
+    seeds: [0, 1]
+    headless: true
+max_steps: 10
+token_count: exact

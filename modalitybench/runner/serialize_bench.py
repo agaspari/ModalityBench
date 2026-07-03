@@ -36,9 +36,11 @@ def run_serialize_bench(
     console: Console | None = None,
 ) -> dict[str, Any]:
     console = console or Console()
-    import modalitybench.observations.serializers  # noqa: F401  (registers serializers)
     from modalitybench.observations import get_strategy, list_strategies
     from modalitybench.observations.dom_capture import graph_from_html
+    from modalitybench.observations.loader import load_strategies
+
+    load_strategies()
 
     client = None
     if not approx:
@@ -56,19 +58,37 @@ def run_serialize_bench(
         console.print("[red]No sample pages found.[/]")
         return {}
 
-    # rows[strategy][sample] = {tokens, bytes, chars, elements}
-    rows: dict[str, dict[str, dict[str, int]]] = {s: {} for s in strategies}
-    for sample_name, html in samples:
-        graph = graph_from_html(html, url=f"https://example.com/{sample_name}")
-        for strat in strategies:
-            obs = get_strategy(strat).observe(graph)
-            rows[strat][sample_name] = {
+    # rows[strategy][sample] = {tokens, bytes, chars, elements}. Skip strategies that can't
+    # run on an offline snapshot (e.g. screenshot needs a live capture).
+    rows: dict[str, dict[str, dict[str, int]]] = {}
+    skipped: list[str] = []
+    for strat in strategies:
+        strat_rows: dict[str, dict[str, int]] = {}
+        ok = True
+        for sample_name, html in samples:
+            graph = graph_from_html(html, url=f"https://example.com/{sample_name}")
+            try:
+                obs = get_strategy(strat).observe(graph, task_text=None)
+            except Exception:
+                ok = False
+                break
+            if obs.has_image and not obs.text():
+                ok = False  # image-only strategy — not a text-token comparison
+                break
+            strat_rows[sample_name] = {
                 "tokens": tc.count_blocks(obs.content_blocks),
                 "bytes": obs.meta["bytes"],
                 "chars": obs.meta["chars"],
                 "elements": obs.meta["element_count"],
             }
+        if ok:
+            rows[strat] = strat_rows
+        else:
+            skipped.append(strat)
 
+    strategies = list(rows)
+    if skipped:
+        console.print(f"[dim]skipped (need live page): {', '.join(sorted(skipped))}[/]")
     sample_names = [s for s, _ in samples]
     _print_table(console, rows, sample_names, strategies, tc.mode)
 

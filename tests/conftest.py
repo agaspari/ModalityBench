@@ -6,8 +6,10 @@ from importlib.resources import files
 
 import pytest
 
-import modalitybench.observations.serializers  # noqa: F401  (register serializers)
 from modalitybench.observations.dom_capture import graph_from_html
+from modalitybench.observations.loader import load_strategies
+
+load_strategies()  # register serializers + wrapper strategies
 
 
 def _sample_html(name: str) -> str:

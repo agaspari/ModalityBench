@@ -135,8 +135,9 @@ def evaluate_offline(
 
 def run_matrix(config: RunConfig, console: Console | None = None) -> Recorder:
     console = console or Console()
-    import modalitybench.observations.serializers  # noqa: F401  (register serializers)
+    from modalitybench.observations.loader import load_strategies
 
+    load_strategies()
     source = build_task_source(config.tasks)
     recorder = Recorder(config.run_id, base_dir=config.results_dir)
     recorder.mark_started(config.model_dump())

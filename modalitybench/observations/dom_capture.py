@@ -389,10 +389,21 @@ _CAPTURE_JS = r"""
 """
 
 
-def graph_from_page(page: Any) -> PageGraph:
-    """Build a ``PageGraph`` from a live Playwright page (validated in Phase 4)."""
+def graph_from_page(page: Any, *, screenshot: bool = True) -> PageGraph:
+    """Build a ``PageGraph`` from a live Playwright page.
+
+    Injects ``data-mb-ref`` attributes and reads computed roles / names / visibility /
+    bboxes. When ``screenshot`` is set, also attaches the page PNG bytes to
+    ``graph.meta['screenshot']`` so image strategies can run from the same capture.
+    """
     data = page.evaluate(_CAPTURE_JS)
-    return _assemble_live(data)
+    graph = _assemble_live(data)
+    if screenshot:
+        try:
+            graph.meta["screenshot"] = page.screenshot()
+        except Exception:
+            pass
+    return graph
 
 
 def _assemble_live(data: dict[str, Any]) -> PageGraph:
