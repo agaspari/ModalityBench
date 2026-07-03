@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Contact us</title></head>
+<body>
+  <main aria-label="contact">
+    <h1>Contact us</h1>
+    <form aria-label="contact form">
+      <label for="name">Full name</label>
+      <input id="name" name="name" type="text" required>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" required>
+      <label for="topic">Topic</label>
+      <select id="topic" name="topic">
+        <option selected>General</option>
+        <option>Billing</option>
+        <option>Technical</option>
+      </select>
+      <label for="msg">Message</label>
+      <textarea id="msg" name="msg" required></textarea>
+      <label><input type="checkbox" name="subscribe"> Subscribe to newsletter</label>
+      <fieldset>
+        <legend>Priority</legend>
+        <label><input type="radio" name="pri" value="low" checked> Low</label>
+        <label><input type="radio" name="pri" value="high"> High</label>
+      </fieldset>
+      <button type="submit">Send message</button>
+      <button type="reset">Clear</button>
+    </form>
+  </main>
+</body>
+</html>

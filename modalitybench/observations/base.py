@@ -58,11 +58,11 @@ class PageNode:
 
 
 _INTERACTIVE_TAGS = {
-    "a", "button", "input", "select", "textarea", "option", "label", "summary",
+    "a", "button", "input", "select", "textarea", "summary",
 }
 _INTERACTIVE_ROLES = {
     "button", "link", "textbox", "checkbox", "radio", "combobox", "listbox",
-    "menuitem", "tab", "switch", "searchbox", "slider", "spinbutton", "option",
+    "menuitem", "tab", "switch", "searchbox", "slider", "spinbutton",
 }
 
 

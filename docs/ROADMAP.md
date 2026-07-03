@@ -6,7 +6,7 @@ here as they surface so nothing is lost. Move an item into a phase when it's sch
 ## Build phases (see plan file)
 
 - [x] **Phase 1** — Skeleton + interfaces (protocols, recorder, config, CLI, docs).
-- [ ] **Phase 2** — DOM capture + 7 serializers + offline token bench (`mb serialize-bench`).
+- [x] **Phase 2** — DOM capture + 7 serializers + offline token bench (`mb serialize-bench`).
 - [ ] **Phase 3** — Offline Mind2Web element-selection eval + matrix runner.
 - [ ] **Phase 4** — Live harness + MiniWoB++, screenshots, salience, tools-mode.
 - [ ] **Phase 5** — Dashboard + exports.

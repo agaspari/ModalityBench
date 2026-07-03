@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Search results — widgets</title></head>
+<body>
+  <header aria-label="masthead">
+    <a href="/">Home</a>
+    <form role="search" aria-label="site search">
+      <input type="search" name="q" value="widgets" aria-label="Search">
+      <button type="submit">Search</button>
+    </form>
+  </header>
+  <nav aria-label="filters">
+    <label><input type="checkbox" name="instock" checked> In stock</label>
+    <label><input type="checkbox" name="sale"> On sale</label>
+    <select name="sort" aria-label="Sort by">
+      <option>Relevance</option>
+      <option selected>Price: low to high</option>
+      <option>Newest</option>
+    </select>
+  </nav>
+  <main aria-label="results">
+    <ul>
+      <li>
+        <a href="/p/1">Blue Widget</a>
+        <span>$9.99</span>
+        <button data-id="1">Add to cart</button>
+      </li>
+      <li>
+        <a href="/p/2">Red Widget</a>
+        <span>$12.49</span>
+        <button data-id="2">Add to cart</button>
+      </li>
+      <li>
+        <a href="/p/3">Green Widget</a>
+        <span>$7.25</span>
+        <button data-id="3">Add to cart</button>
+      </li>
+    </ul>
+  </main>
+  <footer aria-label="Footer links">
+    <a href="/about">About</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+  </footer>
+</body>
+</html>

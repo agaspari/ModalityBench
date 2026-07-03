@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Checkout · Payment</title>
+  <style>.hidden { display: none; }</style>
+  <script>console.log("tracking noise that should never reach the model");</script>
+</head>
+<body>
+  <main aria-label="Checkout">
+    <section aria-label="sum">
+      <p>3 items · total $142.50</p>
+    </section>
+
+    <section aria-label="ship">
+      <p>J. Doe · 123 Main St · Chicago IL</p>
+      <a href="/checkout/shipping">Edit shipping</a>
+    </section>
+
+    <section aria-label="pay">
+      <label for="card">Card number</label>
+      <input id="card" name="card" type="text" placeholder="Card number" required>
+      <label for="exp">Expiry MM/YY</label>
+      <input id="exp" name="exp" type="text" placeholder="Expiry MM/YY" required>
+      <label for="cvc">CVC</label>
+      <input id="cvc" name="cvc" type="text" placeholder="CVC" maxlength="4" required>
+      <label for="country">Country</label>
+      <select id="country" name="country">
+        <option>United States</option>
+        <option selected>United States</option>
+        <option>Canada</option>
+        <option>Mexico</option>
+      </select>
+      <label><input id="save" name="save" type="checkbox"> Save card</label>
+      <input id="promo" name="promo" type="text" placeholder="Promo code">
+      <button id="apply" type="button">Apply</button>
+    </section>
+
+    <section aria-label="act">
+      <button id="pay" type="submit" disabled>Pay $142.50</button>
+      <a href="/cart">Return to cart</a>
+    </section>
+
+    <input type="hidden" name="csrf" value="should-not-appear">
+    <div style="display:none">hidden marketing banner that must be pruned</div>
+  </main>
+</body>
+</html>
