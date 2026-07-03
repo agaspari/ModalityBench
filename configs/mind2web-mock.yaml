@@ -1,0 +1,14 @@
+# Pipeline dry-run: offline Mind2Web element selection with a mock model (no API key).
+# Validates capture -> serialize -> score -> record end to end. Accuracy will be ~0 because
+# the mock always clicks e1 — the point is the plumbing, not the score.
+run_id: mind2web-mock
+strategies: [afus, fct, flat_elements, pruned_html]
+models:
+  - name: mock
+    mock: true
+tasks:
+  source: mind2web_offline
+  options:
+    backend: local
+max_steps: 15
+token_count: approx

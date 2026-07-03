@@ -12,11 +12,20 @@ Commands beyond Phase 1 print a clear "not yet available" notice until their pha
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
+
+# Windows consoles default to cp1252; force UTF-8 so non-latin glyphs (·, ×, box drawing)
+# don't crash when output is piped or redirected.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except (AttributeError, ValueError):
+        pass
 
 app = typer.Typer(add_completion=False, help="ModalityBench — observation-reduction benchmark.")
 console = Console()

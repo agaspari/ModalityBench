@@ -1,0 +1,19 @@
+# Real offline Mind2Web eval over the bundled sample with Claude Opus 4.8.
+# Requires ANTHROPIC_API_KEY (or `ant auth login`). Swap backend to "hf" + a split to run
+# against the full osunlp/Mind2Web dataset (needs: pip install 'modalitybench[data]').
+run_id: mind2web-mini
+strategies: [afus, fct, flat_elements, axtree, pruned_html, body_html]
+models:
+  - name: claude-opus-4-8
+    max_tokens: 2048
+    thinking: true
+    effort: low
+tasks:
+  source: mind2web_offline
+  options:
+    backend: local
+    # backend: hf
+    # split: test_domain
+    # limit: 20
+max_steps: 15
+token_count: exact

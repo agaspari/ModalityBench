@@ -1,0 +1,48 @@
+[
+  {
+    "annotation_id": "sample-search-001",
+    "confirmed_task": "Search for 'wireless headphones' and open the first result.",
+    "website": "shop.example.com",
+    "domain": "shopping",
+    "actions": [
+      {
+        "action_uid": "s1-a1",
+        "operation": {"op": "TYPE", "value": "wireless headphones"},
+        "pos_candidates": [{"backend_node_id": "101", "tag": "input"}],
+        "cleaned_html": "<html><body><header aria-label='masthead'><form role='search' aria-label='site search'><input backend_node_id='101' type='search' name='q' aria-label='Search'><button backend_node_id='102' type='submit'>Search</button></form></header><main aria-label='home'><a backend_node_id='150' href='/deals'>Deals</a></main></body></html>"
+      },
+      {
+        "action_uid": "s1-a2",
+        "operation": {"op": "CLICK", "value": ""},
+        "pos_candidates": [{"backend_node_id": "102", "tag": "button"}],
+        "cleaned_html": "<html><body><header aria-label='masthead'><form role='search' aria-label='site search'><input backend_node_id='101' type='search' name='q' value='wireless headphones' aria-label='Search'><button backend_node_id='102' type='submit'>Search</button></form></header></body></html>"
+      },
+      {
+        "action_uid": "s1-a3",
+        "operation": {"op": "CLICK", "value": ""},
+        "pos_candidates": [{"backend_node_id": "201", "tag": "a"}],
+        "cleaned_html": "<html><body><main aria-label='results'><ul><li><a backend_node_id='201' href='/p/aeropods'>AeroPods Wireless Headphones</a><button backend_node_id='202'>Add to cart</button></li><li><a backend_node_id='211' href='/p/budget'>Budget Earbuds</a><button backend_node_id='212'>Add to cart</button></li></ul></main></body></html>"
+      }
+    ]
+  },
+  {
+    "annotation_id": "sample-form-001",
+    "confirmed_task": "Fill in the email field and submit the newsletter form.",
+    "website": "news.example.com",
+    "domain": "media",
+    "actions": [
+      {
+        "action_uid": "f1-a1",
+        "operation": {"op": "TYPE", "value": "reader@example.com"},
+        "pos_candidates": [{"backend_node_id": "301", "tag": "input"}],
+        "cleaned_html": "<html><body><main aria-label='newsletter'><form aria-label='signup'><label for='e'>Email</label><input backend_node_id='301' id='e' type='email' name='email' required><label for='n'>Name</label><input backend_node_id='302' id='n' type='text' name='name'><button backend_node_id='303' type='submit'>Subscribe</button></form></main></body></html>"
+      },
+      {
+        "action_uid": "f1-a2",
+        "operation": {"op": "CLICK", "value": ""},
+        "pos_candidates": [{"backend_node_id": "303", "tag": "button"}],
+        "cleaned_html": "<html><body><main aria-label='newsletter'><form aria-label='signup'><label for='e'>Email</label><input backend_node_id='301' id='e' type='email' name='email' value='reader@example.com' required><label for='n'>Name</label><input backend_node_id='302' id='n' type='text' name='name'><button backend_node_id='303' type='submit'>Subscribe</button></form></main></body></html>"
+      }
+    ]
+  }
+]
