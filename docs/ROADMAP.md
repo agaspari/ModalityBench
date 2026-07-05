@@ -19,7 +19,9 @@ here as they surface so nothing is lost. Move an item into a phase when it's sch
 - [x] **Phase 5** — Dashboard + exports (`mb dashboard`, `mb export`): self-contained
       HTML with inlined Plotly (token/quality Pareto, token/cost/latency bars, per-cell
       table), CSV/JSON episode exports.
-- [ ] **Phase 6** — Polish (README, extension guides, example configs).
+- [x] **Phase 6** — Polish: refreshed README (status, CLI table, strategy catalog, quickstart),
+      `docs/extending.md` (drop-in guides for strategies / task sources / model clients), and
+      documented the three example configs.
 
 ## Task sources (drop-in via the `TaskSource` adapter interface)
 
