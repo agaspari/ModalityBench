@@ -97,7 +97,11 @@ class MiniWobSource:
     def apply(
         self, handle: _Handle, action: Action, registry: RefRegistry, graph: PageGraph
     ) -> LiveOutcome:
-        code = action_to_code(action, graph)
+        # BrowserGym's coord actions treat inputs as *screenshot* coordinates and divide by
+        # ``_bgym_scale_factor`` (map_coordinates); our bboxes are page coordinates, so we
+        # pre-multiply to cancel it out. Factor is read live (defaults to 1.0 if absent).
+        scale = float(getattr(handle.page, "_bgym_scale_factor", 1.0) or 1.0)
+        code = action_to_code(action, graph, scale=scale)
         if code is None:
             return LiveOutcome(reward=0.0, terminated=False, info="no-op (unresolved ref)")
         _obs, reward, terminated, truncated, info = handle.env.step(code)
@@ -127,10 +131,12 @@ class MiniWobSource:
 # ---------------------------------------------------------------------------
 
 
-def action_to_code(action: Action, graph: PageGraph) -> str | None:
+def action_to_code(action: Action, graph: PageGraph, *, scale: float = 1.0) -> str | None:
     """Translate a ref-based action into a BrowserGym coordinate/nav action string.
 
-    Returns ``None`` when the action can't be grounded (unresolved ref / missing bbox).
+    ``scale`` pre-multiplies click coordinates to cancel BrowserGym's ``map_coordinates``
+    down-scaling (its ``_bgym_scale_factor``); pass 1.0 for raw page coordinates. Returns
+    ``None`` when the action can't be grounded (unresolved ref / missing bbox).
     """
     kind = action.kind
     if kind == "scroll":
@@ -144,13 +150,18 @@ def action_to_code(action: Action, graph: PageGraph) -> str | None:
     center = _center(action.ref, graph)
     if center is None:
         return None
-    cx, cy = center
+    cx, cy = _fmt(center[0] * scale), _fmt(center[1] * scale)
     if kind == "click" or kind == "select":
         return f"mouse_click({cx}, {cy})"
     if kind == "type":
         text = action.text or ""
         return f"mouse_click({cx}, {cy})\nkeyboard_type({text!r})"
     return None
+
+
+def _fmt(v: float) -> str:
+    """Compact coordinate: drop the trailing ``.0`` for whole numbers (e.g. scale=1.0)."""
+    return str(int(v)) if float(v).is_integer() else f"{v:.1f}"
 
 
 def _center(ref: str | None, graph: PageGraph) -> tuple[int, int] | None:

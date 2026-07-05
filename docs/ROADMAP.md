@@ -9,11 +9,12 @@ here as they surface so nothing is lost. Move an item into a phase when it's sch
 - [x] **Phase 2** — DOM capture + 7 serializers + offline token bench (`mb serialize-bench`).
 - [x] **Phase 3** — Offline Mind2Web element-selection eval + matrix runner.
 - [x] **Phase 4** — Live harness + MiniWoB++, screenshots, salience, tools-mode.
-      - Note: the live browser stack (capture, executor, `evaluate_live`) is validated with
-        a real Chromium test against a local page. The **MiniWoB `env.step` reward path**
-        still needs a first live run on a machine with `MINIWOB_URL` set — coordinate
-        translation may need tuning (BrowserGym chrome offsets, `select` support). Verify the
-        agent reaches reward on `click-test` before trusting live numbers.
+      - **Live reward path validated (2026-07-05).** First real MiniWoB run reached reward
+        across `click-test/click-button/focus-text/enter-text`. Root cause of the initial
+        0.00 rewards: BrowserGym's coord actions treat inputs as *screenshot* coordinates and
+        divide by `_bgym_scale_factor` (default 1.5); our bboxes are page coordinates, so
+        `action_to_code` now pre-multiplies by that factor (read live in `apply`). Full
+        40-cell smoke: text serializers 8/8, `screenshot_50pct` 7/8, `tools_mode` 6/8.
       - Live capture refs only interactive elements (offline also refs text leaves). Harmless
         for acting; means live FCT/AFUS omit static-text rows that offline includes.
 - [x] **Phase 5** — Dashboard + exports (`mb dashboard`, `mb export`): self-contained

@@ -23,6 +23,12 @@ def test_action_to_code_click_uses_bbox_center():
     assert action_to_code(Action(kind="click", ref="e1"), g) == "mouse_click(30, 25)"
 
 
+def test_action_to_code_scales_for_browsergym_factor():
+    # BrowserGym divides coords by _bgym_scale_factor; we pre-multiply so the click lands.
+    g = _graph_with_button()
+    assert action_to_code(Action(kind="click", ref="e1"), g, scale=1.5) == "mouse_click(45, 37.5)"
+
+
 def test_action_to_code_type():
     g = _graph_with_button()
     code = action_to_code(Action(kind="type", ref="e1", text="hi"), g)
