@@ -27,6 +27,22 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+
+def _load_dotenv() -> None:
+    """Load a local ``.env`` (ANTHROPIC_API_KEY, MINIWOB_URL, …) if present.
+
+    Searches the cwd and parents. Never overrides variables already set in the real
+    environment, and degrades to a no-op if python-dotenv isn't installed.
+    """
+    try:
+        from dotenv import find_dotenv, load_dotenv
+    except ImportError:
+        return
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+
+
+_load_dotenv()
+
 app = typer.Typer(add_completion=False, help="ModalityBench — observation-reduction benchmark.")
 console = Console()
 

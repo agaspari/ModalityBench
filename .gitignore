@@ -22,6 +22,10 @@ dashboard.html
 # HuggingFace / datasets cache (if pointed locally)
 .cache/
 
+# Secrets / local env
+.env
+.env.local
+
 # OS / editor
 .DS_Store
 .idea/
