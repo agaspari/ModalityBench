@@ -16,7 +16,9 @@ here as they surface so nothing is lost. Move an item into a phase when it's sch
         agent reaches reward on `click-test` before trusting live numbers.
       - Live capture refs only interactive elements (offline also refs text leaves). Harmless
         for acting; means live FCT/AFUS omit static-text rows that offline includes.
-- [ ] **Phase 5** — Dashboard + exports.
+- [x] **Phase 5** — Dashboard + exports (`mb dashboard`, `mb export`): self-contained
+      HTML with inlined Plotly (token/quality Pareto, token/cost/latency bars, per-cell
+      table), CSV/JSON episode exports.
 - [ ] **Phase 6** — Polish (README, extension guides, example configs).
 
 ## Task sources (drop-in via the `TaskSource` adapter interface)
