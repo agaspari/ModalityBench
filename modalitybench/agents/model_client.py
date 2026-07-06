@@ -256,6 +256,8 @@ class OpenAICompatibleClient:
         api_key: str | None = None,
         api_key_env: str | None = None,
         max_tokens: int = 4096,
+        timeout: float = 120.0,
+        max_retries: int = 2,
         client: Any | None = None,
     ) -> None:
         self.model = model
@@ -263,6 +265,11 @@ class OpenAICompatibleClient:
         self.base_url = base_url
         self._api_key = api_key
         self._api_key_env = api_key_env
+        # Per-request timeout + bounded retries so a stalled provider request fails fast
+        # instead of hanging the whole run (the SDK default is a 600s timeout, which stalls
+        # a live benchmark). Worst-case wait ≈ timeout * (1 + max_retries).
+        self._timeout = timeout
+        self._max_retries = max_retries
         self._client = client  # transport is built lazily on first request
 
     def _transport(self) -> Any:
@@ -276,7 +283,10 @@ class OpenAICompatibleClient:
                 os.environ.get(self._api_key_env) if self._api_key_env else None
             )
             self._client = OpenAI(
-                base_url=self.base_url, api_key=key or os.environ.get("OPENAI_API_KEY")
+                base_url=self.base_url,
+                api_key=key or os.environ.get("OPENAI_API_KEY"),
+                timeout=self._timeout,
+                max_retries=self._max_retries,
             )
         return self._client
 

@@ -35,7 +35,16 @@ def build_user_blocks(
         header_lines += [f"  {i + 1}. {h}" for i, h in enumerate(history)]
     header_lines.append("\nPAGE OBSERVATION:")
     blocks: list[ContentBlock] = [TextBlock(text="\n".join(header_lines))]
-    blocks.extend(observation.content_blocks)
+    # A serializer can legitimately produce an empty observation (e.g. no visible interactive
+    # elements at this page state). Anthropic rejects empty text blocks ("text content blocks
+    # must be non-empty" → 400); substitute a placeholder so the request is valid and the model
+    # gets an explicit "nothing here" signal instead of a void. (Token accounting counts the
+    # raw observation blocks separately, so this does not skew measured observation size.)
+    for b in observation.content_blocks:
+        if isinstance(b, TextBlock) and not b.text.strip():
+            blocks.append(TextBlock(text="(no interactive elements visible on this page)"))
+        else:
+            blocks.append(b)
     ask = instruction or (
         "Respond with the JSON action for the single best next step. Reference elements by "
         'their ref id (e.g. {"action": "click", "ref": "e5"}).'

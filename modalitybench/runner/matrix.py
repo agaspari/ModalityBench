@@ -193,17 +193,26 @@ def run_matrix(config: RunConfig, console: Console | None = None) -> Recorder:
             if config.resume and recorder.is_completed(strategy, model_name, task.task_id):
                 console.print(f"[dim]skip {strategy}/{model_name}/{task.task_id} (done)[/]")
                 continue
-            if source.is_live:
-                from modalitybench.agents.loop import evaluate_live
+            try:
+                if source.is_live:
+                    from modalitybench.agents.loop import evaluate_live
 
-                episode = evaluate_live(
-                    source, task, strategy, model_client, token_counter, config.max_steps
+                    episode = evaluate_live(
+                        source, task, strategy, model_client, token_counter, config.max_steps
+                    )
+                else:
+                    episode = evaluate_offline(
+                        source, task, strategy, model_client, token_counter, config.max_steps
+                    )
+                result = source.score(task, episode)
+            except Exception as exc:  # noqa: BLE001 — one bad cell must not kill the run
+                # Not recorded → resume retries it on the next run. Keeps a long live run
+                # alive through a provider timeout / transient browser error.
+                console.print(
+                    f"[red]FAIL[/] {strategy}/{model_name}/{task.task_id}: "
+                    f"{type(exc).__name__}: {exc}"
                 )
-            else:
-                episode = evaluate_offline(
-                    source, task, strategy, model_client, token_counter, config.max_steps
-                )
-            result = source.score(task, episode)
+                continue
             for step in episode.steps:
                 recorder.record_step(strategy, model_name, task.task_id, step)
             recorder.record_episode(strategy, model_name, task.task_id, episode, result)

@@ -18,7 +18,10 @@ class Price:
     output: float  # $ / 1M output tokens
 
 
-# Cached 2026-07; refresh from platform.claude.com/pricing.
+# Cached 2026-07; refresh from platform.claude.com/pricing (Anthropic) and each provider's
+# pricing page. The cache multipliers below are Anthropic-calibrated; OpenAI-compatible
+# providers price cache reads even cheaper (e.g. DeepSeek ~0.02x), so cache-read cost is a
+# slight over-estimate for them — negligible next to the input/output terms.
 MODEL_PRICES: dict[str, Price] = {
     "claude-fable-5": Price(10.00, 50.00),
     "claude-opus-4-8": Price(5.00, 25.00),
@@ -27,6 +30,13 @@ MODEL_PRICES: dict[str, Price] = {
     "claude-sonnet-5": Price(3.00, 15.00),
     "claude-sonnet-4-6": Price(3.00, 15.00),
     "claude-haiku-4-5": Price(1.00, 5.00),
+    # DeepSeek (api-docs.deepseek.com, cache-miss input) — deepseek-chat == v4-flash non-think.
+    # deepseek-reasoner intentionally omitted (thinking-mode price unverified) → fallback-flagged.
+    "deepseek-chat": Price(0.14, 0.28),
+    # Zhipu GLM (docs.z.ai/guides/overview/pricing).
+    "glm-4.6": Price(0.60, 2.20),
+    "glm-4.5": Price(0.60, 2.20),
+    "glm-4.5-air": Price(0.20, 1.10),
     "mock": Price(0.0, 0.0),
 }
 
