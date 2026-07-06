@@ -1,0 +1,34 @@
+# Live WebShop smoke run across a few observation strategies.
+#
+# WebShop (Yao et al., NeurIPS 2022; github.com/princeton-nlp/webshop) is heavier to set up
+# than MiniWoB — it needs a product-data download, a spaCy model, and a search-index build.
+#
+# Prerequisites:
+#   1. Clone + install WebShop and download its data (use the small ~1K-product dev subset
+#      first; the full 1.18M-product set is GBs):
+#        git clone https://github.com/princeton-nlp/webshop && cd webshop
+#        ./setup.sh -d small          # data + spaCy model + index
+#   2. Start its Flask server (defaults to http://127.0.0.1:3000):
+#        ./run_dev.sh                 # or: python -m web_agent_site.app
+#   3. Point ModalityBench at it and install the browser extra:
+#        export WEBSHOP_URL='http://127.0.0.1:3000'
+#        pip install 'modalitybench[browser]' && playwright install chromium
+#        export ANTHROPIC_API_KEY=...   (or `ant auth login`)
+#
+# WebShop pages are small (search box, result links, option buttons, Buy Now), so this is
+# far cheaper per step than the Mind2Web runs; Sonnet 5 keeps the smoke run inexpensive.
+run_id: webshop-smoke
+strategies: [flat_elements, screenshot_50pct, salience_flat, tools_mode]
+models:
+  - name: claude-sonnet-5
+    max_tokens: 2048
+    thinking: true
+    effort: medium
+tasks:
+  source: webshop
+  options:
+    n: 3                # sessions fixed_0..fixed_2 (deterministic goals on the ref server)
+    session_prefix: fixed_
+    headless: true
+max_steps: 15           # search -> results -> item -> options -> Buy Now is ~5-8 steps
+token_count: exact
