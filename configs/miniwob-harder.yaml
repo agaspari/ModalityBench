@@ -1,0 +1,49 @@
+# Harder MiniWoB++ tasks on DeepSeek — the accuracy-axis run.
+#
+# The easy tasks (click-test/click-button/focus-text/enter-text) saturate accuracy at ~100%
+# for every DOM serializer, so only tokens separate them. This set is DOM-cluttered,
+# multi-step, and spatial so accuracy actually varies across strategies — turning the
+# "accuracy vs tokens" trade-off into a real policy instead of a token-only ranking.
+#
+# Single model (deepseek-chat) → the ranking is an internally consistent per-model policy.
+# Re-run the *final* ranking on Sonnet/Opus to confirm it transfers. The spatial tasks are
+# where a screenshot arm should win, but DeepSeek's text model can't do images — that arm
+# lives in configs/miniwob-harder-vision.yaml (a Claude run) since the runner cross-products
+# strategy × model and can't split a model per strategy.
+#
+# Prerequisites:
+#   pip install 'modalitybench[browser,providers]'
+#   playwright install chromium
+#   export MINIWOB_URL='file:///abs/path/to/miniwob-plusplus/miniwob/html/miniwob/'
+#   export DEEPSEEK_API_KEY=...
+#
+# Notes:
+#   - token_count is `approx`: no exact tokenizer is wired for DeepSeek, and observation
+#     *size* ranking is tokenizer-invariant. Real billed tokens still come back in `usage` —
+#     always cross-check usage.input_tokens in episodes.jsonl (tools_mode's multi-round
+#     meta-loop hides its true cost behind a small "mean obs tok").
+run_id: miniwob-harder
+strategies: [afus, flat_elements, salience_flat, tools_mode]
+models:
+  - name: deepseek-chat            # routed to the OpenAI-compatible client (DeepSeek base URL)
+    max_tokens: 2048
+    # base_url / api_key_env default to DeepSeek; override here for a different endpoint.
+tasks:
+  source: miniwob
+  options:
+    # DOM-clutter + multi-step + spatial. All verified against the browsergym.miniwob registry.
+    tasks:
+      - click-checkboxes-large     # many checkboxes; select the named subset (DOM clutter)
+      - use-autocomplete           # type + pick from a dynamic dropdown (multi-step)
+      - enter-date                 # date field + calendar widget (spatial)
+      - login-user-popup           # form behind a popup that must be dismissed first
+      - email-inbox-forward-nl     # NL instruction → navigate inbox + forward (multi-step)
+      - social-media-some          # act on a named subset of feed items (DOM clutter)
+      - book-flight                # form + results list selection (long multi-step)
+      - click-collapsible-2        # expand nested collapsibles to reach the target
+      - click-tab-2-hard           # switch tabs then click the right link (spatial + nav)
+      - search-engine              # type a query, paginate, click the Nth result
+    seeds: [0, 1, 2, 3, 4]
+    headless: true
+max_steps: 25
+token_count: approx

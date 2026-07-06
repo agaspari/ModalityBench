@@ -1,0 +1,42 @@
+# Harder MiniWoB++ — the modality axis (screenshot vs DOM) on a vision model.
+#
+# Companion to configs/miniwob-harder.yaml. DeepSeek's text model can't take images, so the
+# screenshot arm needs a vision model, and the runner cross-products strategy × model (it
+# can't assign a different model per strategy) — hence a *separate* run.
+#
+# Both strategies run on the *same* Claude model, so screenshot-vs-DOM is a clean within-model
+# modality comparison on the spatial/cluttered tasks where pixels should beat serialized DOM.
+# flat_elements is the DOM baseline (it won the DeepSeek DOM ranking); screenshot_50pct is the
+# half-resolution pixel arm (full-res rarely pays for itself on these small MiniWoB canvases).
+#
+# Sonnet keeps image cost in check; bump to claude-opus-4-8 to confirm the ranking transfers.
+# token_count is `exact` here — Anthropic exposes a hosted count_tokens endpoint.
+#
+# Prerequisites:
+#   pip install 'modalitybench[browser]'
+#   playwright install chromium
+#   export MINIWOB_URL='file:///abs/path/to/miniwob-plusplus/miniwob/html/miniwob/'
+#   export ANTHROPIC_API_KEY=...
+run_id: miniwob-harder-vision
+strategies: [flat_elements, screenshot_50pct]
+models:
+  - name: claude-sonnet-5
+    max_tokens: 2048
+tasks:
+  source: miniwob
+  options:
+    tasks:
+      - click-checkboxes-large
+      - use-autocomplete
+      - enter-date
+      - login-user-popup
+      - email-inbox-forward-nl
+      - social-media-some
+      - book-flight
+      - click-collapsible-2
+      - click-tab-2-hard
+      - search-engine
+    seeds: [0, 1]
+    headless: true
+max_steps: 25
+token_count: exact
