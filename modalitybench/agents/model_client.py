@@ -202,6 +202,145 @@ class AnthropicClient:
 
 
 # ---------------------------------------------------------------------------
+# OpenAI-compatible implementation (DeepSeek, Zhipu/GLM, and other compatible APIs)
+# ---------------------------------------------------------------------------
+
+
+def _blocks_to_openai(blocks: list[ContentBlock]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for b in blocks:
+        if isinstance(b, TextBlock):
+            out.append({"type": "text", "text": b.text})
+        elif isinstance(b, ImageBlock):
+            data = base64.standard_b64encode(b.data).decode("ascii")
+            out.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{b.media_type};base64,{data}"},
+                }
+            )
+    return out
+
+
+def _tools_to_openai(tools: list[ToolSpec]) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.input_schema,
+            },
+        }
+        for t in tools
+    ]
+
+
+class OpenAICompatibleClient:
+    """Model client for OpenAI-compatible chat APIs (DeepSeek, Zhipu/GLM, …).
+
+    These providers speak the OpenAI ``chat.completions`` schema, so one client covers them
+    via ``base_url`` + key. Real usage (incl. any cache-hit tokens) is read from the response
+    so cost/token accounting stays accurate per provider — even though observation *size* is
+    counted with the local ``approx`` heuristic (see :func:`metrics.tokens.build_token_counter`).
+
+    The agent loop parses actions from ``message.content`` (text), so ``tools`` are forwarded
+    best-effort and any ``tool_calls`` are surfaced but not required.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        api_key_env: str | None = None,
+        max_tokens: int = 4096,
+        client: Any | None = None,
+    ) -> None:
+        self.model = model
+        self.max_tokens = max_tokens
+        self.base_url = base_url
+        self._api_key = api_key
+        self._api_key_env = api_key_env
+        self._client = client  # transport is built lazily on first request
+
+    def _transport(self) -> Any:
+        """Build (once) the OpenAI SDK client — deferred so construction needs no key/dep."""
+        if self._client is None:
+            import os
+
+            from openai import OpenAI  # lazy: optional dependency
+
+            key = self._api_key or (
+                os.environ.get(self._api_key_env) if self._api_key_env else None
+            )
+            self._client = OpenAI(
+                base_url=self.base_url, api_key=key or os.environ.get("OPENAI_API_KEY")
+            )
+        return self._client
+
+    def complete(
+        self,
+        *,
+        system: str,
+        blocks: list[ContentBlock],
+        tools: list[ToolSpec] | None = None,
+    ) -> ModelResponse:
+        messages: list[dict[str, Any]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": _blocks_to_openai(blocks)})
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": self.max_tokens,
+        }
+        if tools:
+            kwargs["tools"] = _tools_to_openai(tools)
+
+        started = time.perf_counter()
+        resp = self._transport().chat.completions.create(**kwargs)
+        latency = time.perf_counter() - started
+
+        choice = resp.choices[0]
+        text = choice.message.content or ""
+        tool_calls: list[ToolCall] = []
+        for tc in getattr(choice.message, "tool_calls", None) or []:
+            fn = getattr(tc, "function", None)
+            args = getattr(fn, "arguments", "") if fn else ""
+            try:
+                import json
+
+                parsed = json.loads(args) if isinstance(args, str) and args else (args or {})
+            except (ValueError, TypeError):
+                parsed = {"_raw": args}
+            tool_calls.append(
+                ToolCall(id=getattr(tc, "id", ""), name=getattr(fn, "name", ""), input=parsed)
+            )
+
+        u = getattr(resp, "usage", None)
+        # DeepSeek/GLM report cache hits under provider-specific fields; read defensively.
+        cache_read = getattr(u, "prompt_cache_hit_tokens", 0) if u else 0
+        details = getattr(u, "prompt_tokens_details", None) if u else None
+        if not cache_read and details is not None:
+            cache_read = getattr(details, "cached_tokens", 0) or 0
+        usage = Usage(
+            input_tokens=getattr(u, "prompt_tokens", 0) or 0 if u else 0,
+            output_tokens=getattr(u, "completion_tokens", 0) or 0 if u else 0,
+            cache_read_input_tokens=cache_read or 0,
+        )
+        return ModelResponse(
+            text=text,
+            tool_calls=tool_calls,
+            usage=usage,
+            stop_reason=getattr(choice, "finish_reason", None),
+            latency_s=latency,
+            model=self.model,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Mock implementation (tests, dry runs)
 # ---------------------------------------------------------------------------
 

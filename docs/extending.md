@@ -136,10 +136,31 @@ class ModelClient(Protocol):
 `blocks` are `TextBlock` / `ImageBlock`; convert them to your provider's format (see
 `_blocks_to_anthropic`). Populate `ModelResponse.usage` with real token counts — cost,
 token accounting, and the dashboard all read it. `AnthropicClient` is the reference
-implementation; `MockClient` scripts responses for tests and dry runs.
+implementation; `OpenAICompatibleClient` covers DeepSeek / Zhipu-GLM / any OpenAI-compatible
+endpoint; `MockClient` scripts responses for tests and dry runs.
 
-**Wire it in** — extend `build_model_client` in `runner/matrix.py` to construct your client
-(e.g. keyed on the `model` name prefix), and it flows through the existing config unchanged.
+**OpenAI-compatible providers already work** (`pip install 'modalitybench[providers]'`). A
+model named `deepseek-*` or `glm-*` routes to `OpenAICompatibleClient` automatically; any
+other model gets there by setting `base_url` in its config. Keys come from a per-provider env
+var (`DEEPSEEK_API_KEY`, `ZHIPUAI_API_KEY`) or `api_key_env`:
+
+```yaml
+models:
+  - { name: deepseek-chat, max_tokens: 2048 }          # DeepSeek defaults
+  - { name: my-model, base_url: http://localhost:8000/v1, api_key_env: MY_KEY }
+```
+
+**Token counting is model-aware.** `build_token_counter(model, mode)`
+(`metrics/tokens.py`) gives *exact* observation-token counts only where we have a counter for
+that family (Anthropic's hosted `count_tokens`); everything else degrades to the `approx`
+heuristic and is labelled as such in the run summary — so a single-model run's accuracy/token
+ratios stay internally consistent, and real *billed* tokens still come from each response's
+`usage`. To make another family exact, plug its local tokenizer at the seam in
+`build_token_counter`.
+
+**Wire in a brand-new provider** — extend `build_model_client` in `runner/matrix.py` to
+construct your client (keyed on the `model` name prefix or `base_url`), and it flows through
+the existing config unchanged.
 
 ---
 

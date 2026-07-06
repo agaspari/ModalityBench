@@ -37,14 +37,41 @@ def build_task_source(cfg) -> TaskSource:
         from modalitybench.tasks.miniwob import MiniWobSource
 
         return MiniWobSource(**opts)
+    if src == "webshop":
+        from modalitybench.tasks.webshop import WebShopSource
+
+        return WebShopSource(**opts)
     raise ValueError(f"unknown task source {src!r}")
 
 
+# Default API base URL + key env var per OpenAI-compatible provider family. A model's own
+# `base_url` / `api_key_env` in the config override these.
+_PROVIDER_DEFAULTS = {
+    "deepseek": ("https://api.deepseek.com", "DEEPSEEK_API_KEY"),
+    "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPUAI_API_KEY"),
+}
+
+
 def build_model_client(mcfg: ModelConfig) -> ModelClient:
+    from modalitybench.metrics.tokens import model_family
+
     if mcfg.mock:
         # Deterministic stand-in for pipeline dry runs: always clicks e1.
         return MockClient(responder=lambda **_: '{"action": "click", "ref": "e1"}',
                           model="mock")
+
+    family = model_family(mcfg.name)
+    if family in _PROVIDER_DEFAULTS or mcfg.base_url:
+        from modalitybench.agents.model_client import OpenAICompatibleClient
+
+        default_url, default_env = _PROVIDER_DEFAULTS.get(family, (None, None))
+        return OpenAICompatibleClient(
+            model=mcfg.name,
+            base_url=mcfg.base_url or default_url,
+            api_key_env=mcfg.api_key_env or default_env,
+            max_tokens=mcfg.max_tokens,
+        )
+
     from modalitybench.agents.model_client import AnthropicClient
 
     return AnthropicClient(
@@ -143,21 +170,25 @@ def run_matrix(config: RunConfig, console: Console | None = None) -> Recorder:
     recorder.mark_started(config.model_dump())
     tasks = source.tasks()
 
-    # Shared token counter (exact when requested and a key is available).
-    counting_client = None
-    if config.token_count == "exact":
-        try:
-            from modalitybench.agents.model_client import AnthropicClient
+    # Token counter is per-model (model-aware): exact only where we have an exact counter for
+    # that model (Anthropic), else approx — so mixed-provider runs stay honestly labelled.
+    from modalitybench.metrics.tokens import build_token_counter
 
-            counting_client = AnthropicClient()
-        except Exception as exc:
-            console.print(f"[yellow]Exact token counting unavailable ({exc}); using approx.[/]")
-    token_counter = TokenCounter(counting_client)
+    counters: dict[str, TokenCounter] = {}
+    modes: dict[str, str] = {}
+
+    def counter_for(model_name: str) -> TokenCounter:
+        if model_name not in counters:
+            tc = build_token_counter(model_name, config.token_count, console=console)
+            counters[model_name] = tc
+            modes[model_name] = tc.mode
+        return counters[model_name]
 
     agg: dict[tuple[str, str], list[Any]] = {}
     for strategy, mcfg in config.cells():
         model_client = build_model_client(mcfg)
         model_name = model_client.model
+        token_counter = counter_for(model_name)
         for task in tasks:
             if config.resume and recorder.is_completed(strategy, model_name, task.task_id):
                 console.print(f"[dim]skip {strategy}/{model_name}/{task.task_id} (done)[/]")
@@ -183,18 +214,19 @@ def run_matrix(config: RunConfig, console: Console | None = None) -> Recorder:
                 f"obs_tok~{sum(s.obs_tokens for s in episode.steps)}"
             )
 
-    _print_summary(console, agg, token_counter.mode)
+    _print_summary(console, agg, modes)
     console.print(f"\n[green]Results in[/] {recorder.dir}")
     return recorder
 
 
-def _print_summary(console, agg, token_mode) -> None:
+def _print_summary(console, agg, modes: dict[str, str]) -> None:
     if not agg:
         console.print("[yellow]Nothing ran (all cells already complete?).[/]")
         return
-    table = Table(title=f"Run summary ({token_mode} tokens)")
+    table = Table(title="Run summary")
     table.add_column("strategy", style="cyan")
     table.add_column("model")
+    table.add_column("tok mode")
     table.add_column("tasks", justify="right")
     table.add_column("success", justify="right")
     table.add_column("reward", justify="right")
@@ -206,6 +238,7 @@ def _print_summary(console, agg, token_mode) -> None:
         obs = [sum(s.obs_tokens for s in ep.steps) for ep, _ in items]
         mean_obs = sum(obs) / n if obs else 0
         table.add_row(
-            strategy, model, str(n), f"{succ:.2f}", f"{reward:.2f}", f"{mean_obs:.0f}"
+            strategy, model, modes.get(model, "?"), str(n),
+            f"{succ:.2f}", f"{reward:.2f}", f"{mean_obs:.0f}"
         )
     console.print(table)

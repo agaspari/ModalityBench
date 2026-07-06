@@ -1,0 +1,32 @@
+# Cheap live MiniWoB++ iteration on DeepSeek — the inner dev loop.
+#
+# Runs a single model so the accuracy/token ratio across strategies is an internally
+# consistent, per-model policy ("for DeepSeek users, strategy Y is the best cost/accuracy
+# point"). DeepSeek is ~100x cheaper than Opus, so you can iterate on the harness and
+# serializers all week; re-run the *final* ranking on Sonnet/Opus to confirm it transfers.
+#
+# Prerequisites:
+#   pip install 'modalitybench[browser,providers]'
+#   playwright install chromium
+#   export MINIWOB_URL='file:///abs/path/to/miniwob-plusplus/miniwob/html/miniwob/'
+#   export DEEPSEEK_API_KEY=...
+#
+# Notes:
+#   - No image strategies here: DeepSeek's text models can't do the screenshot arm. Keep
+#     screenshots on a vision model (Claude/GPT) as a separate run.
+#   - token_count is `approx`: we have no exact tokenizer wired for DeepSeek, and observation
+#     *size* ranking is tokenizer-invariant. Real billed tokens still come back in `usage`.
+run_id: miniwob-deepseek
+strategies: [afus, flat_elements, salience_flat, tools_mode]
+models:
+  - name: deepseek-chat            # routed to the OpenAI-compatible client (DeepSeek base URL)
+    max_tokens: 2048
+    # base_url / api_key_env default to DeepSeek; override here for a different endpoint.
+tasks:
+  source: miniwob
+  options:
+    tasks: [click-test, click-button, focus-text, enter-text]
+    seeds: [0, 1]
+    headless: true
+max_steps: 10
+token_count: approx

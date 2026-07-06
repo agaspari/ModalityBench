@@ -89,3 +89,57 @@ class TokenCounter:
             except Exception:
                 pass
         return estimate_tokens_local(text)
+
+
+# ---------------------------------------------------------------------------
+# Model-aware counter selection
+# ---------------------------------------------------------------------------
+
+
+def model_family(model: str) -> str:
+    """Coarse provider family from a model name — drives tokenizer/counter selection."""
+    m = (model or "").lower()
+    if m.startswith("claude") or m.startswith("anthropic"):
+        return "anthropic"
+    if m.startswith("deepseek"):
+        return "deepseek"
+    if m.startswith("glm") or m.startswith("zhipu"):
+        return "zhipu"
+    if m == "mock":
+        return "mock"
+    return "other"
+
+
+def supports_exact_count(model: str) -> bool:
+    """Whether we have an *exact* token counter for this model.
+
+    Only Anthropic exposes a hosted ``count_tokens`` endpoint we use here. Other families
+    fall back to the ``approx`` heuristic for observation size — their real *billed* tokens
+    still come back in each response's ``usage``. To upgrade a family to exact, wire its
+    local tokenizer into :func:`build_token_counter` (see comment there).
+    """
+    return model_family(model) == "anthropic"
+
+
+def build_token_counter(model: str, mode: str, *, console: Any | None = None) -> "TokenCounter":
+    """Construct the right :class:`TokenCounter` for ``model`` given the requested ``mode``.
+
+    Exact counting is only wired for Anthropic (hosted ``count_tokens``); every other family
+    degrades to the local ``approx`` heuristic and says so via ``TokenCounter.mode``. This
+    keeps per-model runs honest — a DeepSeek run is never mislabelled as exact-Claude tokens.
+
+    Extension seam: to make, say, DeepSeek exact, load its local tokenizer and pass a small
+    adapter exposing ``count_tokens(system, blocks)`` as the counter's ``client`` below.
+    """
+    if mode == "exact" and supports_exact_count(model):
+        try:
+            from modalitybench.agents.model_client import AnthropicClient
+
+            return TokenCounter(AnthropicClient(model=model))
+        except Exception as exc:  # missing key / SDK — degrade rather than crash
+            if console is not None:
+                console.print(
+                    f"[yellow]Exact token counting unavailable for {model} ({exc}); "
+                    f"using approx.[/]"
+                )
+    return TokenCounter(None)

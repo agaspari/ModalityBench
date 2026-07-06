@@ -9,7 +9,7 @@ tokens against task success. ModalityBench runs a matrix of **observation strate
 × models**, records token / cost / latency / success, and renders an exportable dashboard.
 
 > **Status:** Phases 1–5 are in place — capture, 7 DOM serializers + screenshots + salience +
-> tools-mode, offline (Mind2Web) and live (MiniWoB++) task sources, the matrix runner, and the
+> tools-mode, offline (Mind2Web) and live (MiniWoB++, WebShop) task sources, the matrix runner, and the
 > dashboard/exports. See `docs/ROADMAP.md` for what's next.
 
 ## Install
@@ -61,12 +61,14 @@ All strategies share one captured `PageGraph`, so comparisons are apples-to-appl
 
 ## Configs
 
-Three example runs live in `configs/`:
+Example runs live in `configs/`:
 
 - `mind2web-mock.yaml` — offline Mind2Web element-selection, **mock** model (no API key);
   validates the whole capture → serialize → score → record pipeline.
 - `mind2web-mini.yaml` — the same offline eval with Claude Opus 4.8 (needs a key).
 - `miniwob-smoke.yaml` — a **live** MiniWoB++ run (needs `[browser]` + `MINIWOB_URL`).
+- `webshop-smoke.yaml` — a **live** WebShop run (needs `[browser]` + a running WebShop
+  server via `WEBSHOP_URL`; the config header documents WebShop's data/index setup).
 
 ## Architecture
 

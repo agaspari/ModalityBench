@@ -20,6 +20,10 @@ class ModelConfig(BaseModel):
     thinking: bool = True
     effort: str | None = "medium"
     mock: bool = False  # use MockClient (no API calls) — for dry runs / CI
+    # OpenAI-compatible providers (DeepSeek, GLM, …): override the API base URL and the env
+    # var holding the key. Left None for Anthropic models (routed by name prefix).
+    base_url: str | None = None
+    api_key_env: str | None = None
 
 
 class TaskSourceConfig(BaseModel):

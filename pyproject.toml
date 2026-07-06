@@ -33,6 +33,10 @@ browser = [
 data = [
     "datasets>=2.19",
 ]
+# OpenAI-compatible providers (DeepSeek, Zhipu/GLM, …) for cheap live iteration.
+providers = [
+    "openai>=1.30",
+]
 dev = [
     "pytest>=8.0",
 ]
