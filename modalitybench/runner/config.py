@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ModelConfig(BaseModel):
@@ -41,13 +41,26 @@ class RunConfig(BaseModel):
     results_dir: str = "results"
     token_count: str = "exact"  # "exact" (count_tokens) | "approx" (local heuristic)
     resume: bool = True
-    # Live-loop context lifecycle: "evict" (history = action strings only, flat per-step
-    # context) or "accumulate" (re-send every prior page's observation — the MCP-style
-    # accumulating baseline whose bill grows superlinearly over a trajectory).
-    history_mode: str = "evict"
+    # Live-loop context lifecycle, swept as a matrix axis (live sources only): "evict"
+    # (history = action strings only, flat per-step context) vs "accumulate" (re-send every
+    # prior page's observation — the MCP-style baseline whose bill grows superlinearly). A
+    # bare string is accepted and wrapped, so `history_mode: accumulate` still works.
+    history_modes: list[str] = Field(default_factory=lambda: ["evict"])
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_history(cls, data: Any) -> Any:
+        # Accept legacy scalar `history_mode` and a scalar `history_modes`; normalize to a list.
+        if isinstance(data, dict):
+            if "history_modes" not in data and "history_mode" in data:
+                data["history_modes"] = data.pop("history_mode")
+            hm = data.get("history_modes")
+            if isinstance(hm, str):
+                data["history_modes"] = [hm]
+        return data
 
     def cells(self) -> list[tuple[str, ModelConfig]]:
-        """Cross-product of strategy x model (task expansion happens in the runner)."""
+        """Cross-product of strategy x model (task + history-mode expansion in the runner)."""
         return [(s, m) for s in self.strategies for m in self.models]
 
 

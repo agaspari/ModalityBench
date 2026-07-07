@@ -104,3 +104,29 @@ def test_mock_client_scripted():
     r = mc.complete(system="s", blocks=[TextBlock(text="page text here")], tools=None)
     assert r.text == '{"action": "done"}'
     assert len(mc.calls) == 1
+
+
+def test_recorder_distinguishes_history_modes(tmp_path):
+    # evict and accumulate for the same (strategy, model, task) are distinct cells — they must
+    # not collide on resume when history_mode is swept as an axis.
+    rec = Recorder("run-h", base_dir=tmp_path)
+    ep = Episode(task_id="t1", strategy="pruned_html", model="mock")
+    ep.steps.append(StepRecord(step_index=0, action_kind="done"))
+    rec.record_episode("pruned_html", "mock", "t1", ep, TaskResult(success=True), "evict")
+
+    assert rec.is_completed("pruned_html", "mock", "t1", "evict")
+    assert not rec.is_completed("pruned_html", "mock", "t1", "accumulate")
+    assert cell_id("s", "m", "t", "evict") != cell_id("s", "m", "t", "accumulate")
+
+
+def test_config_history_modes_parsing():
+    from modalitybench.runner.config import RunConfig
+
+    base = {"run_id": "r", "strategies": ["flat_elements"], "tasks": {"source": "miniwob"}}
+    assert RunConfig(**base).history_modes == ["evict"]  # default
+    assert RunConfig(**base, history_modes=["evict", "accumulate"]).history_modes == [
+        "evict", "accumulate",
+    ]
+    # legacy scalar `history_mode` still works, and a scalar `history_modes` is wrapped.
+    assert RunConfig(**base, history_mode="accumulate").history_modes == ["accumulate"]
+    assert RunConfig(**base, history_modes="accumulate").history_modes == ["accumulate"]

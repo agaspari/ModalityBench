@@ -86,6 +86,7 @@ def _oracle_points(steps: list[dict[str, Any]]) -> list[_OraclePoint]:
 class _CellAgg:
     strategy: str
     model: str
+    history_mode: str = "evict"
     n: int = 0
     success: float = 0.0
     reward: float = 0.0
@@ -99,14 +100,15 @@ class _CellAgg:
 
 
 def _aggregate(rows: list[dict[str, Any]]) -> list[_CellAgg]:
-    buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    buckets: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for r in rows:
-        buckets.setdefault((r["strategy"], r["model"]), []).append(r)
+        key = (r["strategy"], r["model"], r.get("history_mode", "evict"))
+        buckets.setdefault(key, []).append(r)
 
     out: list[_CellAgg] = []
-    for (strategy, model), items in buckets.items():
+    for (strategy, model, hmode), items in buckets.items():
         n = len(items)
-        agg = _CellAgg(strategy=strategy, model=model, n=n)
+        agg = _CellAgg(strategy=strategy, model=model, history_mode=hmode, n=n)
         agg.success = _mean(1.0 if i["success"] else 0.0 for i in items)
         agg.reward = _mean(i.get("reward", 0.0) for i in items)
         agg.obs_tokens = _mean(i.get("obs_tokens_total", 0) for i in items)
@@ -130,6 +132,40 @@ def _aggregate(rows: list[dict[str, Any]]) -> list[_CellAgg]:
 def _mean(xs) -> float:
     xs = list(xs)
     return round(statistics.fmean(xs), 4) if xs else 0.0
+
+
+def _page_curves(
+    rows: list[dict[str, Any]], quality_metric: str
+) -> dict[str, list[tuple[float, float, float]]]:
+    """Per series (strategy·mode), points of (n_pages, mean input tokens, mean quality).
+
+    The headline of the context-lifecycle study: how cost and accuracy move as the trajectory
+    grows. Only meaningful when episodes carry a varying ``n_pages`` metric (paginated
+    extraction); returns empty otherwise so the chart is skipped for other sources.
+    """
+    pages_seen: set[float] = set()
+    grouped: dict[tuple[str, str], dict[float, list[dict[str, Any]]]] = {}
+    for r in rows:
+        npages = r.get("metrics", {}).get("n_pages")
+        if npages is None:
+            return {}
+        pages_seen.add(float(npages))
+        series = (r["strategy"], r.get("history_mode", "evict"))
+        grouped.setdefault(series, {}).setdefault(float(npages), []).append(r)
+    if len(pages_seen) < 2:
+        return {}  # no curve to draw from a single page count
+
+    out: dict[str, list[tuple[float, float, float]]] = {}
+    for (strategy, hmode), by_pages in grouped.items():
+        pts = []
+        for npages, eps in sorted(by_pages.items()):
+            tok = _mean(e["usage"]["input_tokens"] for e in eps)
+            qual = _mean(
+                e.get("metrics", {}).get(quality_metric, e.get("reward", 0.0)) for e in eps
+            )
+            pts.append((npages, tok, qual))
+        out[f"{strategy}·{hmode}"] = pts
+    return out
 
 
 def _quality(agg: _CellAgg) -> float:
@@ -231,7 +267,17 @@ def build_dashboard(
     out = out or (run_dir / "dashboard.html")
 
     models = {a.model for a in aggs}
-    labels = [a.strategy if len(models) == 1 else f"{a.strategy}·{a.model}" for a in aggs]
+    hmodes = {a.history_mode for a in aggs}
+
+    def _label(a: _CellAgg) -> str:
+        s = a.strategy
+        if len(models) > 1:
+            s += f"·{a.model}"
+        if len(hmodes) > 1:
+            s += f"·{a.history_mode}"
+        return s
+
+    labels = [_label(a) for a in aggs]
     quality_name = aggs[0].quality_metric if aggs else "reward"
     # The 'magic genie' upper bound: cheapest sufficient representation per step (free post-hoc
     # join, offline runs only). Its gap above the best fixed strategy is the routing headroom.
@@ -361,8 +407,34 @@ def build_dashboard(
         template="plotly_white", height=380
     )
 
+    # 1b) Context-lifecycle headline: how cost and accuracy move as the trajectory grows.
+    #     evict stays ~flat; accumulate climbs superlinearly (paginated extraction only).
+    curves = _page_curves(rows, quality_name)
+    curve_figs = []
+    if curves:
+        _cyc = [_BLUE, _AQUA, _ORANGE, "#8b5cf6", "#e11d63", "#0891b2"]
+        tok_fig, acc_fig = go.Figure(), go.Figure()
+        for i, (name, pts) in enumerate(sorted(curves.items())):
+            color = _cyc[i % len(_cyc)]
+            xs = [p[0] for p in pts]
+            tok_fig.add_trace(go.Scatter(
+                x=xs, y=[p[1] for p in pts], mode="lines+markers", name=name,
+                line=dict(color=color), marker=dict(color=color)))
+            acc_fig.add_trace(go.Scatter(
+                x=xs, y=[p[2] for p in pts], mode="lines+markers", name=name,
+                line=dict(color=color), marker=dict(color=color)))
+        tok_fig.update_layout(
+            title="Billed input tokens vs page count (evict flat · accumulate grows superlinearly)",
+            xaxis_title="pages in trajectory", yaxis_title="mean real input tokens / episode",
+            template="plotly_white", height=430)
+        acc_fig.update_layout(
+            title=f"{quality_name} vs page count",
+            xaxis_title="pages in trajectory", yaxis_title=quality_name,
+            template="plotly_white", height=430)
+        curve_figs = [tok_fig, acc_fig]
+
     config = {"displaylogo": False, "toImageButtonOptions": {"format": "svg"}}
-    figs = [pareto, heat, gap, tokens, cost, latency]
+    figs = [pareto, *curve_figs, heat, gap, tokens, cost, latency]
     chart_html = []
     for i, fig in enumerate(figs):
         inner = fig.to_html(full_html=False, include_plotlyjs=(i == 0), config=config)
@@ -387,7 +459,7 @@ def _table(
     aggs: list[_CellAgg], quality_name: str, oracle_pts: list["_OraclePoint"] | None = None
 ) -> str:
     head = (
-        "<tr><th>strategy</th><th>model</th><th>tasks</th>"
+        "<tr><th>strategy</th><th>model</th><th>history</th><th>tasks</th>"
         f"<th>{quality_name}</th><th>success</th><th>obs tokens</th>"
         "<th>input tok</th><th>output tok</th><th>cost $</th><th>latency s</th></tr>"
     )
@@ -395,7 +467,7 @@ def _table(
     for a in aggs:
         body.append(
             "<tr>"
-            f"<td>{a.strategy}</td><td>{a.model}</td><td>{a.n}</td>"
+            f"<td>{a.strategy}</td><td>{a.model}</td><td>{a.history_mode}</td><td>{a.n}</td>"
             f"<td>{_quality(a):.3f}</td><td>{a.success:.2f}</td>"
             f"<td>{a.obs_tokens:.0f}</td><td>{a.input_tokens:.0f}</td>"
             f"<td>{a.output_tokens:.0f}</td><td>{a.cost:.4f}</td><td>{a.latency:.2f}</td>"
@@ -405,7 +477,7 @@ def _table(
         # Synthetic upper bound — only quality + input tokens are defined; dashes elsewhere.
         body.append(
             "<tr style='font-style:italic;color:#b1560f'>"
-            f"<td>oracle (upper bound)</td><td>{o.model}</td><td>—</td>"
+            f"<td>oracle (upper bound)</td><td>{o.model}</td><td>—</td><td>—</td>"
             f"<td>{o.quality:.3f}</td><td>—</td><td>—</td>"
             f"<td>{o.input_tokens:.0f}</td><td>—</td><td>—</td><td>—</td>"
             "</tr>"

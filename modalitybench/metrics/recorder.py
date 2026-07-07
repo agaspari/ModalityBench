@@ -22,8 +22,8 @@ from modalitybench.metrics.cost import cost_for_usage
 from modalitybench.tasks.base import Episode, StepRecord, TaskResult
 
 
-def cell_id(strategy: str, model: str, task_id: str) -> str:
-    return f"{strategy}::{model}::{task_id}"
+def cell_id(strategy: str, model: str, task_id: str, history_mode: str = "evict") -> str:
+    return f"{strategy}::{model}::{history_mode}::{task_id}"
 
 
 class Recorder:
@@ -56,8 +56,10 @@ class Recorder:
                 done.add(json.loads(line)["cell_id"])
         return done
 
-    def is_completed(self, strategy: str, model: str, task_id: str) -> bool:
-        return cell_id(strategy, model, task_id) in self._completed
+    def is_completed(
+        self, strategy: str, model: str, task_id: str, history_mode: str = "evict"
+    ) -> bool:
+        return cell_id(strategy, model, task_id, history_mode) in self._completed
 
     def completed_cells(self) -> set[str]:
         return set(self._completed)
@@ -65,13 +67,15 @@ class Recorder:
     # -- writing -------------------------------------------------------------
 
     def record_step(
-        self, strategy: str, model: str, task_id: str, step: StepRecord
+        self, strategy: str, model: str, task_id: str, step: StepRecord,
+        history_mode: str = "evict",
     ) -> None:
         row = {
             "run_id": self.run_id,
-            "cell_id": cell_id(strategy, model, task_id),
+            "cell_id": cell_id(strategy, model, task_id, history_mode),
             "strategy": strategy,
             "model": model,
+            "history_mode": history_mode,
             "task_id": task_id,
             **dataclasses.asdict(step),
         }
@@ -84,15 +88,17 @@ class Recorder:
         task_id: str,
         episode: Episode,
         result: TaskResult,
+        history_mode: str = "evict",
     ) -> None:
         total = _sum_usage(episode)
         cost = cost_for_usage(model, total)
         obs_tokens = sum(s.obs_tokens for s in episode.steps)
         row = {
             "run_id": self.run_id,
-            "cell_id": cell_id(strategy, model, task_id),
+            "cell_id": cell_id(strategy, model, task_id, history_mode),
             "strategy": strategy,
             "model": model,
+            "history_mode": history_mode,
             "task_id": task_id,
             "success": result.success,
             "reward": result.reward,
@@ -108,7 +114,7 @@ class Recorder:
             "cost": cost,
         }
         self._append(self._episodes_path, row)
-        cid = cell_id(strategy, model, task_id)
+        cid = cell_id(strategy, model, task_id, history_mode)
         self._append(self._completed_path, {"cell_id": cid})
         self._completed.add(cid)
 

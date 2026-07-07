@@ -1,0 +1,21 @@
+# Build 2 headline — context lifecycle. ONE run sweeps history_mode as a matrix axis, so evict
+# and accumulate land side by side in the same dashboard (distinct series + the page-count
+# curve). evict keeps only action strings (flat per-step context); accumulate re-sends every
+# prior page (MCP-style baseline whose bill grows superlinearly in page count).
+#
+# Browser-free (graph_from_html) — no Playwright. Items are non-interactive text: flat floors,
+# adaptive escalates, pruned pays every page. page_counts sweeps the trajectory length (x-axis).
+run_id: extraction
+strategies: [flat_elements, pruned_html, adaptive]
+models:
+  - name: deepseek-chat
+    max_tokens: 4096
+tasks:
+  source: paginated_extraction
+  options:
+    page_counts: [2, 4, 6, 8]
+    items_per_page: 10
+    seed: 0
+max_steps: 20
+token_count: approx
+history_modes: [evict, accumulate]

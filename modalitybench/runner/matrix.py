@@ -188,40 +188,46 @@ def run_matrix(config: RunConfig, console: Console | None = None) -> Recorder:
         model_client = build_model_client(mcfg)
         model_name = model_client.model
         token_counter = counter_for(model_name)
-        for task in tasks:
-            if config.resume and recorder.is_completed(strategy, model_name, task.task_id):
-                console.print(f"[dim]skip {strategy}/{model_name}/{task.task_id} (done)[/]")
-                continue
-            try:
-                if source.is_live:
-                    from modalitybench.agents.loop import evaluate_live
+        # history_mode is a live-loop axis (evict vs accumulate); offline is single-step so it
+        # has no trajectory to accumulate — pin it to one mode there.
+        hmodes = config.history_modes if source.is_live else ["evict"]
+        for hmode in hmodes:
+            for task in tasks:
+                tag = f"{strategy}/{model_name}/{hmode}/{task.task_id}"
+                if config.resume and recorder.is_completed(
+                    strategy, model_name, task.task_id, hmode
+                ):
+                    console.print(f"[dim]skip {tag} (done)[/]")
+                    continue
+                try:
+                    if source.is_live:
+                        from modalitybench.agents.loop import evaluate_live
 
-                    episode = evaluate_live(
-                        source, task, strategy, model_client, token_counter, config.max_steps,
-                        history_mode=config.history_mode,
-                    )
-                else:
-                    episode = evaluate_offline(
-                        source, task, strategy, model_client, token_counter, config.max_steps
-                    )
-                result = source.score(task, episode)
-            except Exception as exc:  # noqa: BLE001 — one bad cell must not kill the run
-                # Not recorded → resume retries it on the next run. Keeps a long live run
-                # alive through a provider timeout / transient browser error.
-                console.print(
-                    f"[red]FAIL[/] {strategy}/{model_name}/{task.task_id}: "
-                    f"{type(exc).__name__}: {exc}"
+                        episode = evaluate_live(
+                            source, task, strategy, model_client, token_counter,
+                            config.max_steps, history_mode=hmode,
+                        )
+                    else:
+                        episode = evaluate_offline(
+                            source, task, strategy, model_client, token_counter,
+                            config.max_steps,
+                        )
+                    result = source.score(task, episode)
+                except Exception as exc:  # noqa: BLE001 — one bad cell must not kill the run
+                    # Not recorded → resume retries it on the next run. Keeps a long live run
+                    # alive through a provider timeout / transient browser error.
+                    console.print(f"[red]FAIL[/] {tag}: {type(exc).__name__}: {exc}")
+                    continue
+                for step in episode.steps:
+                    recorder.record_step(strategy, model_name, task.task_id, step, hmode)
+                recorder.record_episode(
+                    strategy, model_name, task.task_id, episode, result, hmode
                 )
-                continue
-            for step in episode.steps:
-                recorder.record_step(strategy, model_name, task.task_id, step)
-            recorder.record_episode(strategy, model_name, task.task_id, episode, result)
-            agg.setdefault((strategy, model_name), []).append((episode, result))
-            console.print(
-                f"[green]OK[/] {strategy}/{model_name}/{task.task_id} "
-                f"success={result.success} reward={result.reward:.2f} "
-                f"obs_tok~{sum(s.obs_tokens for s in episode.steps)}"
-            )
+                agg.setdefault((strategy, model_name, hmode), []).append((episode, result))
+                console.print(
+                    f"[green]OK[/] {tag} success={result.success} "
+                    f"reward={result.reward:.2f} obs_tok~{sum(s.obs_tokens for s in episode.steps)}"
+                )
 
     _print_summary(console, agg, modes)
     console.print(f"\n[green]Results in[/] {recorder.dir}")
@@ -235,19 +241,20 @@ def _print_summary(console, agg, modes: dict[str, str]) -> None:
     table = Table(title="Run summary")
     table.add_column("strategy", style="cyan")
     table.add_column("model")
+    table.add_column("history", style="magenta")
     table.add_column("tok mode")
     table.add_column("tasks", justify="right")
     table.add_column("success", justify="right")
     table.add_column("reward", justify="right")
     table.add_column("mean obs tok", justify="right")
-    for (strategy, model), items in sorted(agg.items()):
+    for (strategy, model, hmode), items in sorted(agg.items()):
         n = len(items)
         succ = sum(1 for _, r in items if r.success) / n
         reward = sum(r.reward for _, r in items) / n
         obs = [sum(s.obs_tokens for s in ep.steps) for ep, _ in items]
         mean_obs = sum(obs) / n if obs else 0
         table.add_row(
-            strategy, model, modes.get(model, "?"), str(n),
+            strategy, model, hmode, modes.get(model, "?"), str(n),
             f"{succ:.2f}", f"{reward:.2f}", f"{mean_obs:.0f}"
         )
     console.print(table)
