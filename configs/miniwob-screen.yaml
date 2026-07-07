@@ -1,0 +1,71 @@
+# Breadth screen — phase 1 of "The Token Trap".
+#
+# Goal: find which MiniWoB tasks carry ANY signal for the observation-strategy comparison,
+# i.e. are passable by at least one cheap DOM method. Survivors graduate to a deeper sweep
+# (more seeds + tools_mode/tools_mode_rich) for the convincing writeup.
+#
+# Design: 2 cheap single-round methods x 2 seeds x ~40 DOM-relevant tasks (DeepSeek).
+#   - tools_mode is deliberately EXCLUDED here (slow 6-round meta-loop, already well
+#     characterized on results/miniwob-{deepseek,harder}); it rejoins for the deep dive.
+#   - pure spatial/visual/drag tasks are excluded — a text DOM model can't do them, so they
+#     floor for reasons unrelated to the serializer thesis.
+#   - 2 seeds under-detects borderline tasks (true ~30% -> ~51% chance of >=1 pass); treat any
+#     0/2 as "probably floored, recheck" rather than a hard drop. Survivors get more seeds.
+run_id: miniwob-screen
+strategies: [flat_elements, salience_flat]
+models:
+  - name: deepseek-chat
+    max_tokens: 2048
+tasks:
+  source: miniwob
+  options:
+    tasks:
+      # clicking / selection
+      - click-button-sequence
+      - click-checkboxes
+      - click-checkboxes-large
+      - click-checkboxes-soft
+      - click-collapsible
+      - click-collapsible-2
+      - click-dialog-2
+      - click-menu
+      - click-tab-2
+      - click-tab-2-medium
+      - click-widget
+      # forms / entry
+      - enter-password
+      - enter-date
+      - enter-time
+      - login-user
+      - login-user-popup
+      - multi-layouts
+      - multi-orderings
+      - form-sequence
+      - sign-agreement
+      # email
+      - email-inbox
+      - email-inbox-forward
+      - email-inbox-delete
+      - email-inbox-important
+      - email-inbox-noscroll
+      # navigation / structured
+      - navigate-tree
+      - search-engine
+      - social-media
+      - social-media-some
+      - use-autocomplete
+      - book-flight
+      - choose-date-easy
+      # reading / reasoning (text)
+      - read-table
+      - read-table-2
+      - find-word
+      - phone-book
+      - simple-arithmetic
+      - text-transform
+      - guess-number
+      - order-food
+    seeds: [0, 1]
+    headless: true
+max_steps: 25
+token_count: approx

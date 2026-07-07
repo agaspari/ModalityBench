@@ -1,0 +1,40 @@
+# Modality crossover check — is the reading-task floor a model limit or an observation gap?
+#
+# The screen (results/miniwob-screen) floored every reading/reasoning task on the two
+# interactive-only serializers (flat_elements, salience_flat). Trace evidence: on
+# simple-arithmetic the model typed "I don't see a math problem" — the static text a task
+# needs is filtered out by `and n.is_interactive`, so the model can't read what isn't there.
+# A stronger model can't fix that (Sonnet floored the same tasks). The lever is the OBSERVATION.
+#
+# This run holds the model fixed (deepseek-chat) and varies only the serializer:
+#   flat_elements — interactive-only (cheapest; INTENDED to omit text — a real modality point)
+#   axtree        — accessibility tree, includes node text
+#   pruned_html   — aggressively trimmed HTML ("bodytrim"), keeps hierarchy + text
+# Expectation = a CROSSOVER, not "flat is broken":
+#   - reading tasks (read-table, simple-arithmetic, ...) UN-FLOOR on axtree/pruned_html
+#   - interactive anchors (login-user, click-widget, ...) stay solved on flat at fewer tokens
+# If that holds, the floor is observation coverage, not model IQ — no model swap needed.
+run_id: miniwob-modality-check
+strategies: [flat_elements, axtree, pruned_html]
+models:
+  - name: deepseek-chat
+    max_tokens: 2048
+tasks:
+  source: miniwob
+  options:
+    tasks:
+      # reading / reasoning — floored on interactive-only; should recover with text
+      - read-table
+      - read-table-2
+      - find-word
+      - simple-arithmetic
+      - text-transform
+      - phone-book
+      # interactive anchors — flat scored 1.0 on the screen; text serializers pay more tokens
+      - login-user
+      - click-widget
+      - click-button-sequence
+    seeds: [0, 1]
+    headless: true
+max_steps: 25
+token_count: approx

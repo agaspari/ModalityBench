@@ -81,6 +81,70 @@ def _quality(agg: _CellAgg) -> float:
     return agg.reward
 
 
+# Palette (validated via the dataviz skill: categorical #2a78d6/#1baf7a/#eb6834 pass CVD;
+# blue sequential ramp for magnitude). Kept as module constants so the whole page reads
+# as one system.
+_BLUE = "#2a78d6"
+_AQUA = "#1baf7a"
+_ORANGE = "#eb6834"
+_INK = "#0b0b0b"
+_BLUE_SEQ = [
+    [0.0, "#eef5fe"],
+    [0.2, "#b7d3f6"],
+    [0.4, "#6da7ec"],
+    [0.6, "#3987e5"],
+    [0.8, "#256abf"],
+    [1.0, "#104281"],
+]
+
+
+def _task_matrix(
+    rows: list[dict[str, Any]],
+) -> tuple[list[str], list[str], list[list[float | None]], list[list[str]], list[list[int]]]:
+    """Success rate per (strategy, base-task), for the per-task heatmap.
+
+    ``task_id`` is ``"<task>#<seed>"``; we aggregate over seeds. Tasks are ordered by
+    overall success (best first) so floored tasks cluster on the right.
+    """
+    cells: dict[tuple[str, str], list[float]] = {}
+    for r in rows:
+        strat = r["strategy"]
+        task = str(r["task_id"]).split("#")[0]
+        cells.setdefault((strat, task), []).append(1.0 if r["success"] else 0.0)
+
+    strategies = sorted({s for s, _ in cells})
+    tasks = sorted({t for _, t in cells})
+
+    def overall(t: str) -> float:
+        vals = [v for (_s, tt), lst in cells.items() if tt == t for v in lst]
+        return sum(vals) / len(vals) if vals else 0.0
+
+    tasks.sort(key=lambda t: (-overall(t), t))
+
+    z: list[list[float | None]] = []
+    text: list[list[str]] = []
+    counts: list[list[int]] = []
+    for s in strategies:
+        zr: list[float | None] = []
+        tr: list[str] = []
+        nr: list[int] = []
+        for t in tasks:
+            lst = cells.get((s, t))
+            if lst:
+                m = sum(lst) / len(lst)
+                zr.append(round(m, 4))
+                tr.append(f"{m:.2f}")
+                nr.append(len(lst))
+            else:
+                zr.append(None)
+                tr.append("")
+                nr.append(0)
+        z.append(zr)
+        text.append(tr)
+        counts.append(nr)
+    return strategies, tasks, z, text, counts
+
+
 def build_dashboard(
     run_id: str,
     *,
@@ -96,55 +160,119 @@ def build_dashboard(
     aggs = _aggregate(rows)
     out = out or (run_dir / "dashboard.html")
 
-    labels = [f"{a.strategy}" for a in aggs]
+    models = {a.model for a in aggs}
+    labels = [a.strategy if len(models) == 1 else f"{a.strategy}·{a.model}" for a in aggs]
     quality_name = aggs[0].quality_metric if aggs else "reward"
 
-    # 1) Pareto: observation tokens (x, lower better) vs quality (y, higher better).
+    # 1) Frontier: REAL billed input tokens (x, lower better) vs quality (y, higher better).
+    #    Real usage.input_tokens is the honest cost axis — observation size lies (see #3).
     pareto = go.Figure()
     pareto.add_trace(
         go.Scatter(
-            x=[a.obs_tokens for a in aggs],
+            x=[a.input_tokens for a in aggs],
             y=[_quality(a) for a in aggs],
             mode="markers+text",
             text=labels,
             textposition="top center",
-            marker=dict(size=14, color=[_quality(a) for a in aggs], colorscale="Viridis",
-                        showscale=True, colorbar=dict(title=quality_name)),
-            hovertemplate="<b>%{text}</b><br>obs tokens=%{x:.0f}<br>"
+            marker=dict(size=13, color=_BLUE, line=dict(width=1.5, color="#ffffff")),
+            hovertemplate="<b>%{text}</b><br>real input tok/ep=%{x:.0f}<br>"
             + quality_name + "=%{y:.3f}<extra></extra>",
         )
     )
     pareto.update_layout(
-        title="Token / quality frontier (upper-left is better)",
-        xaxis_title="mean observation tokens per episode",
+        title="Accuracy vs REAL billed input tokens per episode (upper-left is better)",
+        xaxis_title="mean real billed input tokens / episode",
         yaxis_title=quality_name,
         template="plotly_white",
         height=460,
     )
 
-    # 2) Token bars: input vs output per strategy.
+    # 2) Per-task success matrix: which tasks carry signal (passable) for each strategy.
+    #    Missing cells (a strategy that hasn't run a task yet, e.g. mid-run) are coalesced to
+    #    0.0 for a fully numeric z — Plotly's categorical heatmap fails axis scaling on nulls —
+    #    and left unannotated (cell_n == 0) so they read as blank "not run" rather than a real 0.
+    strategies, tasks_x, z, cell_text, cell_n = _task_matrix(rows)
+    # Transpose to tasks-as-rows: with many tasks a tall matrix (a few strategy columns, one
+    # readable horizontal task label per row) scans far better than a wide 2-row strip.
+    ns, nt = len(strategies), len(tasks_x)
+    zT = [[(z[s][t] if z[s][t] is not None else 0.0) for s in range(ns)] for t in range(nt)]
+    textT = [[cell_text[s][t] for s in range(ns)] for t in range(nt)]
+    nT = [[cell_n[s][t] for s in range(ns)] for t in range(nt)]
+    heat = go.Figure(
+        go.Heatmap(
+            z=zT, x=strategies, y=tasks_x, zmin=0, zmax=1, colorscale=_BLUE_SEQ,
+            colorbar=dict(title="success"), customdata=nT,
+            hovertemplate="<b>%{y}</b><br>%{x}<br>success=%{z:.2f}<br>n=%{customdata}"
+            "<extra></extra>",
+        )
+    )
+    anns = [
+        dict(
+            x=strategies[xi], y=tasks_x[yi], text=textT[yi][xi], showarrow=False,
+            font=dict(size=11, color="#ffffff" if zT[yi][xi] > 0.5 else _INK),
+        )
+        for yi in range(nt)
+        for xi in range(ns)
+        if nT[yi][xi] > 0
+    ]
+    # Height grows ~24px per task (best-first from the top). Explicit top+bottom margins keep
+    # the plot area positive — a too-short figure collapses the axis and Plotly throws
+    # "Something went wrong with axis scaling" in setScale.
+    heat.update_layout(
+        title="Per-task success rate (task × strategy) — darker = passable",
+        annotations=anns, template="plotly_white",
+        height=110 + 24 * max(nt, 1),
+        margin=dict(t=70, l=180, b=50, r=20),
+        yaxis=dict(autorange="reversed"),
+    )
+
+    # 3) The honesty gap: apparent observation size vs real billed input tokens.
+    ratios = [(a.input_tokens / a.obs_tokens if a.obs_tokens else 0.0) for a in aggs]
+    gap = go.Figure()
+    gap.add_trace(
+        go.Bar(name="apparent (observation tokens)", x=labels,
+               y=[a.obs_tokens for a in aggs], marker_color=_ORANGE)
+    )
+    gap.add_trace(
+        go.Bar(name="real billed (input tokens)", x=labels,
+               y=[a.input_tokens for a in aggs], marker_color=_BLUE,
+               text=[f"{r:.0f}×" for r in ratios], textposition="outside")
+    )
+    gap.update_layout(
+        title="The honesty gap: observation size vs real billed input tokens (× = real ÷ apparent)",
+        barmode="group", yaxis_title="tokens / episode",
+        template="plotly_white", height=430,
+    )
+
+    # 4) Token bars: input vs output per strategy.
     tokens = go.Figure()
-    tokens.add_trace(go.Bar(name="input tokens", x=labels, y=[a.input_tokens for a in aggs]))
-    tokens.add_trace(go.Bar(name="output tokens", x=labels, y=[a.output_tokens for a in aggs]))
+    tokens.add_trace(
+        go.Bar(name="input tokens", x=labels, y=[a.input_tokens for a in aggs],
+               marker_color=_BLUE)
+    )
+    tokens.add_trace(
+        go.Bar(name="output tokens", x=labels, y=[a.output_tokens for a in aggs],
+               marker_color=_AQUA)
+    )
     tokens.update_layout(
         title="Model tokens per episode", barmode="group", template="plotly_white", height=420
     )
 
-    # 3) Cost bar.
-    cost = go.Figure(go.Bar(x=labels, y=[a.cost for a in aggs], marker_color="#c65f2e"))
+    # 5) Cost bar.
+    cost = go.Figure(go.Bar(x=labels, y=[a.cost for a in aggs], marker_color=_ORANGE))
     cost.update_layout(
         title="Mean cost per episode (USD)", yaxis_title="$", template="plotly_white", height=380
     )
 
-    # 4) Latency bar.
-    latency = go.Figure(go.Bar(x=labels, y=[a.latency for a in aggs], marker_color="#2e78c6"))
+    # 6) Latency bar.
+    latency = go.Figure(go.Bar(x=labels, y=[a.latency for a in aggs], marker_color=_BLUE))
     latency.update_layout(
         title="Mean latency per episode (s)", yaxis_title="seconds",
         template="plotly_white", height=380
     )
 
     config = {"displaylogo": False, "toImageButtonOptions": {"format": "svg"}}
-    figs = [pareto, tokens, cost, latency]
+    figs = [pareto, heat, gap, tokens, cost, latency]
     chart_html = []
     for i, fig in enumerate(figs):
         inner = fig.to_html(full_html=False, include_plotlyjs=(i == 0), config=config)
