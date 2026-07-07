@@ -7,7 +7,50 @@ import json
 
 import pytest
 
-from modalitybench.dashboard.build import build_dashboard, export_results
+from modalitybench.dashboard.build import (
+    _oracle_points,
+    build_dashboard,
+    export_results,
+)
+
+
+def _step(strategy, task, idx, *, correct, in_tok, model="mock"):
+    return {
+        "strategy": strategy, "model": model, "task_id": task, "step_index": idx,
+        "correct": correct, "input_tokens": in_tok,
+    }
+
+
+def test_oracle_picks_cheapest_correct_representation():
+    # 1 task, 2 steps, 2 strategies. step0: both correct -> pick cheap (10).
+    # step1: only rich correct -> must pay rich (100). quality=2/2, tokens=110.
+    steps = [
+        _step("cheap", "t1", 0, correct=True, in_tok=10),
+        _step("rich", "t1", 0, correct=True, in_tok=100),
+        _step("cheap", "t1", 1, correct=False, in_tok=10),
+        _step("rich", "t1", 1, correct=True, in_tok=100),
+    ]
+    pts = _oracle_points(steps)
+    assert len(pts) == 1
+    assert pts[0].quality == 1.0
+    assert pts[0].input_tokens == 110.0
+
+
+def test_oracle_counts_unsolvable_step_and_pays_cheapest():
+    steps = [
+        _step("cheap", "t1", 0, correct=True, in_tok=10),
+        _step("rich", "t1", 0, correct=True, in_tok=100),
+        _step("cheap", "t1", 1, correct=False, in_tok=5),   # neither works this step
+        _step("rich", "t1", 1, correct=False, in_tok=50),
+    ]
+    pts = _oracle_points(steps)
+    assert pts[0].quality == 0.5             # 1 of 2 steps solvable
+    assert pts[0].input_tokens == 10 + 5     # step1 unsolvable -> pay the cheapest
+
+
+def test_oracle_empty_for_live_runs_without_correctness():
+    steps = [_step("s", "t1", 0, correct=None, in_tok=10)]
+    assert _oracle_points(steps) == []
 
 
 def _episode(strategy: str, task: str, *, acc: float, tokens: int, cost: float) -> dict:

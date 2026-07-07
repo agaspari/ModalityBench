@@ -25,6 +25,63 @@ def _load_episodes(run_dir: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
+def _load_steps(run_dir: Path) -> list[dict[str, Any]]:
+    path = run_dir / "steps.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+@dataclass
+class _OraclePoint:
+    model: str
+    quality: float  # fraction of steps solved by *some* representation (per-step upper bound)
+    input_tokens: float  # mean per-episode cost picking the cheapest sufficient rep each step
+
+
+def _oracle_points(steps: list[dict[str, Any]]) -> list[_OraclePoint]:
+    """The 'magic genie' upper bound: per step, the cheapest representation that gets it right.
+
+    A free post-hoc join over a multi-strategy run's per-step records — no new model calls.
+    Only meaningful where per-step correctness exists (offline element-selection), so returns
+    empty for live runs. Quality = fraction of steps solvable by *any* strategy (no single
+    serializer dominates, so the union beats the best fixed one); cost = sum of the cheapest
+    correct strategy's real input tokens each step (or the cheapest overall when no rep works).
+    """
+    if not any(s.get("correct") is not None for s in steps):
+        return []
+    by_model: dict[str, list[dict[str, Any]]] = {}
+    for s in steps:
+        by_model.setdefault(s.get("model", ""), []).append(s)
+
+    out: list[_OraclePoint] = []
+    for model, ms in by_model.items():
+        # (task -> step_index -> {strategy: (correct, input_tokens)})
+        tasks: dict[str, dict[int, dict[str, tuple[bool, int]]]] = {}
+        for s in ms:
+            step_map = tasks.setdefault(s["task_id"], {}).setdefault(s["step_index"], {})
+            step_map[s["strategy"]] = (bool(s.get("correct")), int(s.get("input_tokens", 0)))
+        # need >1 strategy for a routing choice to exist
+        n_strats = len({s["strategy"] for s in ms})
+        if n_strats < 2:
+            continue
+        task_acc: list[float] = []
+        task_tok: list[float] = []
+        for step_map in tasks.values():
+            flags: list[float] = []
+            toks: list[int] = []
+            for choices in step_map.values():
+                correct = [tok for _s, (c, tok) in choices.items() if c]
+                flags.append(1.0 if correct else 0.0)
+                toks.append(min(correct) if correct else min(t for _c, t in choices.values()))
+            if flags:
+                task_acc.append(sum(flags) / len(flags))
+                task_tok.append(float(sum(toks)))
+        if task_acc:
+            out.append(_OraclePoint(model, _mean(task_acc), _mean(task_tok)))
+    return out
+
+
 @dataclass
 class _CellAgg:
     strategy: str
@@ -98,19 +155,32 @@ _BLUE_SEQ = [
 ]
 
 
+def _episode_quality(row: dict[str, Any], quality_metric: str) -> float:
+    """The per-episode value the heatmap plots — matches the frontier's quality axis.
+
+    Offline sources (Mind2Web) expose ``element_accuracy`` (per-step partial credit); binary
+    ``success`` there is all-or-nothing across a 5-15 step task and floors to 0, so the grid
+    would be dead. Live sources fall back to ``reward``.
+    """
+    if quality_metric == "element_accuracy":
+        return float(row.get("metrics", {}).get("element_accuracy", row.get("reward", 0.0)))
+    return float(row.get("reward", 0.0))
+
+
 def _task_matrix(
     rows: list[dict[str, Any]],
+    quality_metric: str = "reward",
 ) -> tuple[list[str], list[str], list[list[float | None]], list[list[str]], list[list[int]]]:
-    """Success rate per (strategy, base-task), for the per-task heatmap.
+    """Mean quality per (strategy, base-task), for the per-task heatmap.
 
     ``task_id`` is ``"<task>#<seed>"``; we aggregate over seeds. Tasks are ordered by
-    overall success (best first) so floored tasks cluster on the right.
+    overall quality (best first) so floored tasks cluster at the bottom.
     """
     cells: dict[tuple[str, str], list[float]] = {}
     for r in rows:
         strat = r["strategy"]
         task = str(r["task_id"]).split("#")[0]
-        cells.setdefault((strat, task), []).append(1.0 if r["success"] else 0.0)
+        cells.setdefault((strat, task), []).append(_episode_quality(r, quality_metric))
 
     strategies = sorted({s for s, _ in cells})
     tasks = sorted({t for _, t in cells})
@@ -163,6 +233,9 @@ def build_dashboard(
     models = {a.model for a in aggs}
     labels = [a.strategy if len(models) == 1 else f"{a.strategy}·{a.model}" for a in aggs]
     quality_name = aggs[0].quality_metric if aggs else "reward"
+    # The 'magic genie' upper bound: cheapest sufficient representation per step (free post-hoc
+    # join, offline runs only). Its gap above the best fixed strategy is the routing headroom.
+    oracle_pts = _oracle_points(_load_steps(run_dir))
 
     # 1) Frontier: REAL billed input tokens (x, lower better) vs quality (y, higher better).
     #    Real usage.input_tokens is the honest cost axis — observation size lies (see #3).
@@ -179,19 +252,35 @@ def build_dashboard(
             + quality_name + "=%{y:.3f}<extra></extra>",
         )
     )
+    if oracle_pts:
+        pareto.add_trace(
+            go.Scatter(
+                x=[o.input_tokens for o in oracle_pts],
+                y=[o.quality for o in oracle_pts],
+                mode="markers+text",
+                text=["oracle" for _ in oracle_pts],
+                textposition="bottom center",
+                marker=dict(size=17, color=_ORANGE, symbol="star",
+                            line=dict(width=1.5, color="#ffffff")),
+                name="oracle (per-step upper bound)",
+                hovertemplate="<b>oracle — per-step upper bound</b><br>real input tok/ep="
+                "%{x:.0f}<br>" + quality_name + "=%{y:.3f}<extra></extra>",
+            )
+        )
     pareto.update_layout(
         title="Accuracy vs REAL billed input tokens per episode (upper-left is better)",
         xaxis_title="mean real billed input tokens / episode",
         yaxis_title=quality_name,
         template="plotly_white",
         height=460,
+        showlegend=bool(oracle_pts),
     )
 
     # 2) Per-task success matrix: which tasks carry signal (passable) for each strategy.
     #    Missing cells (a strategy that hasn't run a task yet, e.g. mid-run) are coalesced to
     #    0.0 for a fully numeric z — Plotly's categorical heatmap fails axis scaling on nulls —
     #    and left unannotated (cell_n == 0) so they read as blank "not run" rather than a real 0.
-    strategies, tasks_x, z, cell_text, cell_n = _task_matrix(rows)
+    strategies, tasks_x, z, cell_text, cell_n = _task_matrix(rows, quality_name)
     # Transpose to tasks-as-rows: with many tasks a tall matrix (a few strategy columns, one
     # readable horizontal task label per row) scans far better than a wide 2-row strip.
     ns, nt = len(strategies), len(tasks_x)
@@ -201,9 +290,9 @@ def build_dashboard(
     heat = go.Figure(
         go.Heatmap(
             z=zT, x=strategies, y=tasks_x, zmin=0, zmax=1, colorscale=_BLUE_SEQ,
-            colorbar=dict(title="success"), customdata=nT,
-            hovertemplate="<b>%{y}</b><br>%{x}<br>success=%{z:.2f}<br>n=%{customdata}"
-            "<extra></extra>",
+            colorbar=dict(title=quality_name), customdata=nT,
+            hovertemplate="<b>%{y}</b><br>%{x}<br>" + quality_name + "=%{z:.2f}"
+            "<br>n=%{customdata}<extra></extra>",
         )
     )
     anns = [
@@ -215,13 +304,14 @@ def build_dashboard(
         for xi in range(ns)
         if nT[yi][xi] > 0
     ]
-    # Height grows ~24px per task (best-first from the top). Explicit top+bottom margins keep
-    # the plot area positive — a too-short figure collapses the axis and Plotly throws
-    # "Something went wrong with axis scaling" in setScale.
+    # Height grows ~30px per task (best-first from the top). A hard floor of 300px keeps the
+    # plot area well clear of the 120px top+bottom margins even for few-task runs — otherwise a
+    # too-short figure collapses the axis and Plotly throws "Something went wrong with axis
+    # scaling" in setScale (seen on 1-2 task smoke runs).
     heat.update_layout(
-        title="Per-task success rate (task × strategy) — darker = passable",
+        title=f"Per-task {quality_name} (task × strategy) — darker = better",
         annotations=anns, template="plotly_white",
-        height=110 + 24 * max(nt, 1),
+        height=max(300, 130 + 30 * max(nt, 1)),
         margin=dict(t=70, l=180, b=50, r=20),
         yaxis=dict(autorange="reversed"),
     )
@@ -278,7 +368,7 @@ def build_dashboard(
         inner = fig.to_html(full_html=False, include_plotlyjs=(i == 0), config=config)
         chart_html.append(f'<div class="chart">{inner}</div>')
 
-    table_html = _table(aggs, quality_name)
+    table_html = _table(aggs, quality_name, oracle_pts)
     out.parent.mkdir(parents=True, exist_ok=True)
     page = _PAGE_TEMPLATE.format(
         run_id=run_id,
@@ -293,7 +383,9 @@ def build_dashboard(
     return out
 
 
-def _table(aggs: list[_CellAgg], quality_name: str) -> str:
+def _table(
+    aggs: list[_CellAgg], quality_name: str, oracle_pts: list["_OraclePoint"] | None = None
+) -> str:
     head = (
         "<tr><th>strategy</th><th>model</th><th>tasks</th>"
         f"<th>{quality_name}</th><th>success</th><th>obs tokens</th>"
@@ -307,6 +399,15 @@ def _table(aggs: list[_CellAgg], quality_name: str) -> str:
             f"<td>{_quality(a):.3f}</td><td>{a.success:.2f}</td>"
             f"<td>{a.obs_tokens:.0f}</td><td>{a.input_tokens:.0f}</td>"
             f"<td>{a.output_tokens:.0f}</td><td>{a.cost:.4f}</td><td>{a.latency:.2f}</td>"
+            "</tr>"
+        )
+    for o in oracle_pts or []:
+        # Synthetic upper bound — only quality + input tokens are defined; dashes elsewhere.
+        body.append(
+            "<tr style='font-style:italic;color:#b1560f'>"
+            f"<td>oracle (upper bound)</td><td>{o.model}</td><td>—</td>"
+            f"<td>{o.quality:.3f}</td><td>—</td><td>—</td>"
+            f"<td>{o.input_tokens:.0f}</td><td>—</td><td>—</td><td>—</td>"
             "</tr>"
         )
     return f"<table>{head}{''.join(body)}</table>"
