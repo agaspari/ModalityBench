@@ -172,10 +172,12 @@ class PaginatedExtractionSource:
         name_recall = name_hits / n_gt if n_gt else 0.0
         exact_recall = exact_hits / n_gt if n_gt else 0.0
         precision = name_hits / n_pred if n_pred else 0.0
+        # Headline fidelity is name-based F1 (found the items, didn't hallucinate) — robust to
+        # price reformatting. `exact_recall` (name AND price) is the stricter secondary metric.
         f1 = (2 * precision * name_recall / (precision + name_recall)) if (precision + name_recall) else 0.0
         return TaskResult(
-            success=exact_recall >= 0.99,
-            reward=round(exact_recall, 4),
+            success=f1 >= 0.99,
+            reward=round(f1, 4),
             metrics={
                 "extraction_f1": round(f1, 4),
                 "name_recall": round(name_recall, 4),

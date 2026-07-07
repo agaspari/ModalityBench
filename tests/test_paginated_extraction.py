@@ -95,56 +95,131 @@ def _find_next_ref(text: str) -> str | None:
     return None
 
 
-def _nav_responder(answer_json: str):
-    """Click the current page's Next link; when there's no Next (last page), submit answer."""
+# Item names look like "Hazel Mug 1000" (Adjective Noun 4-digit-id) in any serializer's output.
+_ITEM_RE = re.compile(r"[A-Z][a-z]+ [A-Z][a-z]+ \d{4}")
+
+
+def _sees_only_agent(*, escalate: bool = True):
+    """A **memoryless** agent that can only act on what its current prompt actually shows it.
+
+    This is the key test tool: unlike a scripted mock, it is never handed the answer — it
+    reports *exactly* the item names present in its context, so each serializer's observation
+    becomes the tested contract:
+
+    * hide the items (``flat_elements``) -> the agent sees none -> it floors (reward 0);
+    * show them (``pruned_html``) -> it extracts what's on screen;
+    * put them behind a stub (``adaptive``) -> it must ``request_text`` first to see them.
+
+    Because it has no memory across steps, under ``evict`` it can only submit the *last* page it
+    saw, while under ``accumulate`` the re-sent earlier pages are in-context so it submits them
+    all — which is precisely the eviction claim, now deterministic and API-free.
+
+    Policy each turn (using only the current prompt): escalate if items are hidden behind a
+    stub; else click Next while one is on the current page; else submit every item name visible
+    anywhere in the context.
+    """
 
     def responder(*, system, blocks, tools):
-        text = "\n".join(getattr(b, "text", "") for b in blocks)
-        current = text.split("CURRENT PAGE OBSERVATION:")[-1]  # ignore accumulated prior pages
+        full = "\n".join(getattr(b, "text", "") for b in blocks)
+        current = full.split("CURRENT PAGE OBSERVATION:")[-1]
+        if escalate and "request_text()" in current and not _ITEM_RE.search(current):
+            return json.dumps({"action": "request_text"})  # adaptive: reveal hidden items
         ref = _find_next_ref(current)
         if ref:
-            return json.dumps({"action": "click", "ref": ref})
-        return json.dumps({"action": "done", "answer": answer_json})
+            return json.dumps({"action": "click", "ref": ref})  # walk to the next page
+        names = list(dict.fromkeys(_ITEM_RE.findall(full)))  # only what it has actually seen
+        return json.dumps({"action": "done", "answer": json.dumps([{"name": n} for n in names])})
 
     return responder
 
 
-def test_evaluate_live_walks_all_pages_and_scores(monkeypatch):
-    src = _src(pages=3, ipp=3)
+def _run(strategy, pages, ipp, *, mode="evict", escalate=True, max_steps=15, seed=0):
+    src = PaginatedExtractionSource(page_counts=[pages], items_per_page=ipp, seed=seed)
     task = src.tasks()[0]
-    answer = json.dumps(_catalog(0, 9))
-    client = MockClient(responder=_nav_responder(answer))
-    ep = evaluate_live(src, task, "pruned_html", client, TokenCounter(), max_steps=10)
-    # 3 pages => 2 Next clicks + 1 done
+    client = MockClient(responder=_sees_only_agent(escalate=escalate))
+    ep = evaluate_live(src, task, strategy, client, TokenCounter(), max_steps, history_mode=mode)
+    return src.score(task, ep), ep, client
+
+
+def test_pruned_agent_walks_all_pages_and_extracts():
+    # A sees-only agent on a text serializer, accumulate mode: navigates every page and
+    # legitimately reconstructs the whole catalog (not handed to it).
+    result, ep, _ = _run("pruned_html", pages=3, ipp=3, mode="accumulate")
     assert [s.action_kind for s in ep.steps] == ["click", "click", "done"]
-    assert ep.meta["answer"] == answer
-    result = src.score(task, ep)
     assert result.success and result.reward == 1.0
 
 
-def test_accumulate_bills_more_than_evict(monkeypatch):
-    task = _src(pages=3, ipp=4).tasks()[0]
-    answer = json.dumps(_catalog(0, 12))
+# -- the thesis, as deterministic tests --------------------------------------
 
-    def run(mode: str) -> int:
-        src = _src(pages=3, ipp=4)
-        client = MockClient(responder=_nav_responder(answer))
-        ep = evaluate_live(
-            src, task, "pruned_html", client, TokenCounter(), max_steps=10, history_mode=mode
-        )
-        return sum(s.input_tokens for s in ep.steps), client
 
-    (evict_tok, evict_client) = run("evict")
-    (acc_tok, acc_client) = run("accumulate")
+def test_modality_floor_flat_cannot_extract_pruned_can():
+    # Single page (no navigation): the ONLY difference is what the serializer reveals.
+    flat_r, _, _ = _run("flat_elements", pages=1, ipp=5)
+    pruned_r, _, _ = _run("pruned_html", pages=1, ipp=5)
+    assert flat_r.reward == 0.0  # items are non-interactive text -> flat hides them -> floor
+    assert pruned_r.reward == 1.0  # same page, text serializer -> full extraction
 
-    # Accumulate re-sends prior pages every step => strictly more billed input tokens.
-    assert acc_tok > evict_tok
-    # ...and the earlier-pages block only appears in accumulate mode.
-    acc_text = "\n".join(
-        getattr(b, "text", "") for c in acc_client.calls for b in c["blocks"]
-    )
-    evict_text = "\n".join(
-        getattr(b, "text", "") for c in evict_client.calls for b in c["blocks"]
-    )
-    assert "EARLIER PAGES" in acc_text
-    assert "EARLIER PAGES" not in evict_text
+
+def test_eviction_lifecycle_accumulate_beats_evict_on_extraction():
+    # pruned_html over 3 pages: evict loses earlier pages (memoryless agent sees only the last),
+    # accumulate re-sends them so the agent can report all. The context lifecycle IS the result.
+    evict_r, _, _ = _run("pruned_html", pages=3, ipp=4, mode="evict")
+    acc_r, _, _ = _run("pruned_html", pages=3, ipp=4, mode="accumulate")
+    assert acc_r.reward == 1.0
+    assert evict_r.reward < acc_r.reward  # only ~last page survives eviction
+    assert evict_r.metrics["name_recall"] < 0.5  # ~1 of 3 pages
+
+
+def test_adaptive_escalation_is_load_bearing():
+    # adaptive hides items behind a stub. Escalating agent reads them; the identical agent that
+    # refuses to escalate floors like flat -> proves the request_text escape hatch carries the win.
+    esc_r, _, _ = _run("adaptive", pages=1, ipp=5, escalate=True)
+    noesc_r, _, _ = _run("adaptive", pages=1, ipp=5, escalate=False)
+    assert esc_r.reward == 1.0
+    assert noesc_r.reward == 0.0
+    assert esc_r.reward > noesc_r.reward
+
+
+def test_accumulate_context_contains_prior_pages_and_bills_more():
+    _, evict_ep, evict_client = _run("pruned_html", pages=3, ipp=4, mode="evict")
+    _, acc_ep, acc_client = _run("pruned_html", pages=3, ipp=4, mode="accumulate")
+
+    def alltext(c):
+        return "\n".join(getattr(b, "text", "") for call in c.calls for b in call["blocks"])
+
+    # The accumulated context literally carries the earlier pages; evict never does.
+    assert "EARLIER PAGES" in alltext(acc_client) and "EARLIER PAGES" not in alltext(evict_client)
+    # And re-sending them costs strictly more real input tokens.
+    assert sum(s.input_tokens for s in acc_ep.steps) > sum(s.input_tokens for s in evict_ep.steps)
+
+
+# -- edge / resilience -------------------------------------------------------
+
+
+def test_stuck_agent_hits_max_steps_and_scores_zero():
+    # An agent that never advances and never submits must terminate cleanly at max_steps.
+    src = _src(pages=3)
+    task = src.tasks()[0]
+    client = MockClient(responder=lambda **_: json.dumps({"action": "click", "ref": "zzz"}))
+    ep = evaluate_live(src, task, "flat_elements", client, TokenCounter(), max_steps=5)
+    assert len(ep.steps) == 5  # bounded, no infinite loop
+    assert src.score(task, ep).reward == 0.0  # never submitted an answer
+
+
+def test_score_dedups_and_normalizes_names():
+    from modalitybench.tasks.base import Episode
+
+    src = _src(pages=2, ipp=3)
+    task = src.tasks()[0]
+    items = _catalog(0, 6)
+    ep = Episode(task_id=task.task_id, strategy="x", model="m")
+    # Same item twice (should count once) + one with messy case/whitespace (should still match).
+    messy = {"name": f"  {items[1]['name'].upper()}  ", "price": items[1]["price"]}
+    ep.meta["answer"] = json.dumps([items[0], items[0], messy])
+    r = src.score(task, ep)
+    assert r.metrics["exact_recall"] == round(2 / 6, 4)  # two distinct items matched
+
+
+def test_catalog_varies_by_seed():
+    assert _catalog(1, 10) == _catalog(1, 10)
+    assert _catalog(1, 10) != _catalog(2, 10)

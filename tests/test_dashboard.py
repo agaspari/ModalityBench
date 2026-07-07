@@ -53,6 +53,34 @@ def test_oracle_empty_for_live_runs_without_correctness():
     assert _oracle_points(steps) == []
 
 
+def test_oracle_needs_at_least_two_strategies():
+    steps = [_step("only", "t1", 0, correct=True, in_tok=10)]
+    assert _oracle_points(steps) == []  # no routing choice with a single strategy
+
+
+def test_oracle_quality_dominates_every_fixed_strategy():
+    # Invariant: the oracle solves the UNION of what any strategy solves, so its accuracy is
+    # >= the best single strategy's. Here A and B each solve half, disjointly -> oracle = 1.0.
+    steps = [
+        _step("A", "t1", 0, correct=True, in_tok=10),
+        _step("B", "t1", 0, correct=False, in_tok=99),
+        _step("A", "t1", 1, correct=False, in_tok=10),
+        _step("B", "t1", 1, correct=True, in_tok=99),
+    ]
+    # per-strategy accuracy
+    from collections import defaultdict
+
+    acc = defaultdict(lambda: [0, 0])
+    for s in steps:
+        acc[s["strategy"]][0] += int(s["correct"])
+        acc[s["strategy"]][1] += 1
+    best_fixed = max(c / n for c, n in acc.values())
+
+    (oracle,) = _oracle_points(steps)
+    assert oracle.quality >= best_fixed
+    assert oracle.quality == 1.0  # union of {0} and {1}
+
+
 def _episode(strategy: str, task: str, *, acc: float, tokens: int, cost: float) -> dict:
     """A minimal episodes.jsonl row shaped like the recorder emits."""
     return {
