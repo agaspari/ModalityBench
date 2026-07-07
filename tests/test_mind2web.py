@@ -10,7 +10,11 @@ import modalitybench.observations.serializers  # noqa: F401
 from modalitybench.agents.model_client import MockClient
 from modalitybench.metrics.tokens import TokenCounter
 from modalitybench.runner.matrix import evaluate_offline
-from modalitybench.tasks.mind2web_offline import Mind2WebOffline, action_f1
+from modalitybench.tasks.mind2web_offline import (
+    Mind2WebOffline,
+    _normalise_hf_action,
+    action_f1,
+)
 
 
 def _correct_ref(graph, gt) -> str:
@@ -83,3 +87,23 @@ def test_action_f1():
     assert action_f1("type", "hello world", "type", "hello world") == 1.0
     assert action_f1("click", "", "type", "hello") < 1.0
     assert action_f1("type", "wrong", "click", "") == 0.0
+
+
+def test_normalise_hf_action_accepts_dict_and_json_string_forms():
+    # `datasets` yields dict fields for train; the raw test.zip encodes them as JSON strings.
+    dict_form = {
+        "action_uid": "a1",
+        "operation": {"op": "CLICK", "value": ""},
+        "pos_candidates": [{"backend_node_id": 42, "tag": "a"}],
+        "cleaned_html": "<html></html>",
+    }
+    str_form = {
+        "action_uid": "a1",
+        "operation": json.dumps({"op": "CLICK", "value": ""}),
+        "pos_candidates": [json.dumps({"backend_node_id": 42, "tag": "a"})],
+        "cleaned_html": "<html></html>",
+    }
+    a, b = _normalise_hf_action(dict_form), _normalise_hf_action(str_form)
+    assert a == b
+    assert a["operation"]["op"] == "CLICK"
+    assert a["pos_candidates"] == [{"backend_node_id": "42", "tag": "a"}]

@@ -1,0 +1,25 @@
+# Real Mind2Web offline benchmark on a published TEST split (literature-comparable element
+# accuracy), with the full serializer lineup + adaptive so the frontier + oracle charts are
+# meaningful. Infra-light: no browser, no server — cached HTML snapshots scored teacher-forced.
+#
+# Splits (osunlp/Mind2Web test.zip): test_task | test_website | test_domain. test.zip is
+# PASSWORD-PROTECTED (Mind2Web encrypts the test set). Supply it one of two ways:
+#   A. extract it yourself, then set MIND2WEB_TEST_DIR (or `test_dir` below) to the folder; or
+#   B. set MIND2WEB_TEST_PASSWORD to the Mind2Web test password (reads the cached zip directly).
+# See the run instructions this config was handed with.
+#
+# Scale up: raise `limit` (or drop it for the full split). Swap model to claude-opus-4-8 +
+# token_count: exact for exact billed tokens.
+run_id: mind2web-test
+strategies: [flat_elements, axtree, pruned_html, adaptive]
+models:
+  - name: deepseek-chat
+    max_tokens: 2048
+tasks:
+  source: mind2web_offline
+  options:
+    backend: hf
+    split: test_website   # 177 tasks — mid-sized generalization split
+    limit: 50             # start here; raise or remove for the full split
+max_steps: 15
+token_count: approx       # deepseek has no exact counter; use `exact` only with an Anthropic model

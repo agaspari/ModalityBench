@@ -12,9 +12,12 @@ Two backends:
 
 from __future__ import annotations
 
+import glob
 import json
+import os
 import re
 from importlib.resources import files
+from pathlib import Path
 from typing import Any
 
 from modalitybench.observations.base import PageGraph
@@ -37,12 +40,19 @@ class Mind2WebOffline:
         limit: int | None = None,
         task_ids: list[str] | None = None,
         hf_name: str = "osunlp/Mind2Web",
+        test_dir: str | None = None,
+        test_password: str | None = None,
     ) -> None:
         self.backend = backend
         self.split = split
         self.limit = limit
         self.task_ids = set(task_ids) if task_ids else None
         self.hf_name = hf_name
+        # Test splits are password-protected inside test.zip. Either point `test_dir` (or
+        # MIND2WEB_TEST_DIR) at a folder you extracted yourself, or give the password via
+        # `test_password` / MIND2WEB_TEST_PASSWORD to read the cached encrypted zip directly.
+        self.test_dir = test_dir or os.environ.get("MIND2WEB_TEST_DIR")
+        self.test_password = test_password or os.environ.get("MIND2WEB_TEST_PASSWORD")
         self._records: list[dict[str, Any]] = self._load()
 
     # -- loading -------------------------------------------------------------
@@ -69,25 +79,95 @@ class Mind2WebOffline:
         return records
 
     def _load_hf(self) -> list[dict[str, Any]]:
+        # Only `train` is exposed as a `datasets` split; the published test splits
+        # (test_task | test_website | test_domain) ship inside test.zip in the repo.
+        if self.split == "train":
+            return self._load_hf_train()
+        return self._load_hf_test(self.split)
+
+    def _load_hf_train(self) -> list[dict[str, Any]]:
         try:
             from datasets import load_dataset
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
                 "the 'hf' backend needs the data extra: pip install 'modalitybench[data]'"
             ) from exc
-        ds = load_dataset(self.hf_name, split=self.split)
-        out = []
-        for row in ds:
-            out.append(
-                {
-                    "annotation_id": row["annotation_id"],
-                    "confirmed_task": row["confirmed_task"],
-                    "website": row.get("website", ""),
-                    "domain": row.get("domain", ""),
-                    "actions": [_normalise_hf_action(a) for a in row["actions"]],
-                }
+        ds = load_dataset(self.hf_name, split="train")
+        return [self._row_from_hf(row) for row in ds]
+
+    def _load_hf_test(self, split: str) -> list[dict[str, Any]]:
+        """Load a Mind2Web *test* split (test_task / test_website / test_domain).
+
+        These generalization splits aren't exposed by ``datasets`` — they live in a
+        **password-protected** ``test.zip`` in the repo (Mind2Web encrypts the test set to
+        deter training-set contamination). Two ways to supply them, in priority order:
+
+        1. ``test_dir`` / ``MIND2WEB_TEST_DIR`` — a folder you already extracted, containing
+           ``<split>/<split>_*.json`` (or ``<split>*.json``). No password handling in-process.
+        2. ``test_password`` / ``MIND2WEB_TEST_PASSWORD`` — read the cached encrypted zip
+           directly using the Mind2Web test password.
+        """
+        if self.test_dir:
+            return self._load_test_from_dir(Path(self.test_dir), split)
+
+        import zipfile
+
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "the 'hf' backend needs the data extra: pip install 'modalitybench[data]'"
+            ) from exc
+        zip_path = hf_hub_download(self.hf_name, "test.zip", repo_type="dataset")
+        rows: list[dict[str, Any]] = []
+        with zipfile.ZipFile(zip_path) as z:
+            if self.test_password:
+                z.setpassword(self.test_password.encode())
+            members = [
+                n for n in z.namelist()
+                if n.endswith(".json") and split in n.replace("/", "_")
+            ]
+            if not members:
+                raise ValueError(
+                    f"no JSON member matching split {split!r} in test.zip "
+                    f"(members: {z.namelist()[:8]}...)"
+                )
+            try:
+                for m in sorted(members):
+                    with z.open(m) as fh:
+                        data = json.load(fh)
+                    rows.extend(data if isinstance(data, list) else [data])
+            except RuntimeError as exc:  # encrypted / bad password
+                raise RuntimeError(
+                    "Mind2Web test.zip is password-protected. Set MIND2WEB_TEST_PASSWORD "
+                    "(option test_password) to the Mind2Web test password, or extract it "
+                    "yourself and set MIND2WEB_TEST_DIR (option test_dir) to the folder. "
+                    "The password is obtained from the Mind2Web repo/authors."
+                ) from exc
+        return [self._row_from_hf(r) for r in rows]
+
+    def _load_test_from_dir(self, root: Path, split: str) -> list[dict[str, Any]]:
+        files_ = sorted(glob.glob(str(root / split / "*.json"))) or sorted(
+            glob.glob(str(root / f"{split}*.json"))
+        )
+        if not files_:
+            raise ValueError(
+                f"no {split!r} JSON files under {root} (expected {split}/{split}_*.json)"
             )
-        return out
+        rows: list[dict[str, Any]] = []
+        for f in files_:
+            data = json.loads(Path(f).read_text(encoding="utf-8"))
+            rows.extend(data if isinstance(data, list) else [data])
+        return [self._row_from_hf(r) for r in rows]
+
+    def _row_from_hf(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "annotation_id": row["annotation_id"],
+            "confirmed_task": row["confirmed_task"],
+            "website": row.get("website", ""),
+            "domain": row.get("domain", ""),
+            "actions": [_normalise_hf_action(a) for a in row["actions"]],
+        }
 
     # -- TaskSource API ------------------------------------------------------
 
@@ -187,15 +267,20 @@ def _repr_action(op: dict[str, Any], candidates: list[dict[str, Any]]) -> str:
 
 
 def _normalise_hf_action(a: dict[str, Any]) -> dict[str, Any]:
+    # `datasets` gives dicts for train; the raw test.zip JSON encodes operation and each
+    # pos_candidate as JSON strings — accept both.
+    op = _as_obj(a["operation"])
+    cands = []
+    for c in a["pos_candidates"]:
+        c = _as_obj(c)
+        cands.append({"backend_node_id": str(c["backend_node_id"]), "tag": c.get("tag", "")})
     return {
         "action_uid": a.get("action_uid", ""),
-        "operation": {
-            "op": a["operation"]["op"],
-            "value": a["operation"].get("value", ""),
-        },
-        "pos_candidates": [
-            {"backend_node_id": str(c["backend_node_id"]), "tag": c.get("tag", "")}
-            for c in a["pos_candidates"]
-        ],
+        "operation": {"op": op["op"], "value": op.get("value", "")},
+        "pos_candidates": cands,
         "cleaned_html": a["cleaned_html"],
     }
+
+
+def _as_obj(v: Any) -> dict[str, Any]:
+    return json.loads(v) if isinstance(v, str) else v
