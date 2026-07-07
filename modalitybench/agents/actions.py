@@ -48,6 +48,13 @@ META_SCHEMA: dict[str, str] = {
     "outline": "outline(): list the page's landmark sections",
     "find": "find(query): search the page for elements matching a text/role query",
     "read": "read(ref): read the full details of one element or section by ref",
+    "request_text": (
+        "request_text(): return the page's static text (labels, tables, paragraphs) "
+        "that the affordance list omits"
+    ),
+    "request_detail": (
+        "request_detail(ref): return the full text/subtree under one ref or landmark section"
+    ),
 }
 
 _VALID_KINDS = set(ACTION_SCHEMA) | set(META_SCHEMA)

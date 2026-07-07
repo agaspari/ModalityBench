@@ -63,11 +63,58 @@ def test_decide_runs_tools_mode_subloop(checkout_graph):
             f'{{"action": "click", "ref": "{pay_ref}"}}',  # then act
         ]
     )
-    action, usage, latency, raw = decide(mock, "pay the total", obs, history=[])
+    action, usage, latency, raw, meta_calls = decide(mock, "pay the total", obs, history=[])
     assert action.kind == "click"
     assert action.ref == pay_ref
     assert len(mock.calls) == 2  # one meta round + the committing round
     assert usage.input_tokens > 0  # usage summed across rounds
+    assert meta_calls == ["find"]  # router trace: one exploration call before committing
+
+
+# -- adaptive (request_detail hybrid) ---------------------------------------
+
+
+def test_adaptive_lean_view_advertises_hidden_text(checkout_graph):
+    obs = get_strategy("adaptive").observe(checkout_graph, task_text="pay the total")
+    assert obs.meta["tools_mode"] is True
+    assert obs.meta["max_meta_rounds"] == 3
+    # Lean default: names the affordances (the Pay button) like flat...
+    assert "Pay" in obs.text()
+    # ...but is leaner than a text-inclusive serializer.
+    pruned = get_strategy("pruned_html").observe(checkout_graph)
+    assert obs.meta["bytes"] < pruned.meta["bytes"]
+    # The stub advertises the escape hatch when static text was dropped.
+    n_hidden = obs.meta["hidden_text_regions"]
+    assert n_hidden > 0
+    assert "request_text()" in obs.text()
+    assert str(n_hidden) in obs.text()
+
+
+def test_adaptive_request_text_returns_dropped_text(checkout_graph):
+    obs = get_strategy("adaptive").observe(checkout_graph, task_text="pay the total")
+    handler = obs.meta["tool_handler"]
+    text = handler.request_text()
+    assert text and text != "(no additional static text on this page)"
+    # Static text is absent from the lean affordance view but present on demand.
+    assert len(text) > 0
+
+
+def test_adaptive_router_trace_records_escalation(checkout_graph):
+    obs = get_strategy("adaptive").observe(checkout_graph, task_text="pay the total")
+    pay_ref = next(
+        r for r in obs.ref_registry.refs()
+        if "Pay" in (checkout_graph.by_ref()[r].name or "")
+    )
+    mock = MockClient(
+        responses=[
+            '{"action": "request_text"}',                  # escalate to read text
+            f'{{"action": "click", "ref": "{pay_ref}"}}',  # then act
+        ]
+    )
+    action, usage, latency, raw, meta_calls = decide(mock, "pay the total", obs, history=[])
+    assert action.kind == "click"
+    assert action.ref == pay_ref
+    assert meta_calls == ["request_text"]  # router escalated exactly once
 
 
 # -- screenshot -------------------------------------------------------------

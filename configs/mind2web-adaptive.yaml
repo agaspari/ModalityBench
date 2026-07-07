@@ -1,0 +1,26 @@
+# Act 2 — router economics / no-regression: the adaptive request_detail hybrid vs a lean
+# floor (flat), an efficient midpoint (axtree), and the accuracy leader (pruned_html), on
+# teacher-forced single-step Mind2Web. Validates the router (does adaptive escalate only on
+# extraction legs, matching axtree/pruned accuracy at fewer mean tokens) — NOT the eviction
+# headline, which needs the live paginated suite (Build 2).
+#
+# backend: local = the 5 bundled sample snapshots (cheap smoke). Swap to hf + a split/limit
+# for real numbers (needs: pip install 'modalitybench[data]').
+run_id: mind2web-adaptive
+strategies: [flat_elements, axtree, pruned_html, adaptive]
+models:
+  - name: deepseek-chat
+    max_tokens: 2048
+tasks:
+  source: mind2web_offline
+  options:
+    backend: local
+    # --- real Mind2Web (comment out `backend: local` above, uncomment below) ---
+    # backend: hf
+    # split: train        # ONLY 'train' loads via HF datasets; the test_* splits ship
+    #                      # inside test.zip and are NOT auto-exposed. osunlp/Mind2Web is
+    #                      # public (no HF token). First run downloads the FULL train split
+    #                      # (~GB, several minutes) and caches it — `limit` is applied after.
+    # limit: 20
+max_steps: 15
+token_count: approx

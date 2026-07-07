@@ -47,6 +47,10 @@ def _run_meta(handler, action: Action) -> str:
         return handler.find(action.query or action.text or "")
     if action.kind == "read":
         return handler.read(action.ref or "")
+    if action.kind == "request_text":
+        return handler.request_text()
+    if action.kind == "request_detail":
+        return handler.request_detail(action.ref or "")
     return "(unknown query)"
 
 
@@ -57,17 +61,23 @@ def decide(
     history: list[str],
     *,
     max_meta_rounds: int = 6,
-) -> tuple[Action, Usage, float, str]:
-    """Get the next real action, running the tools-mode sub-loop if the obs exposes tools."""
+) -> tuple[Action, Usage, float, str, list[str]]:
+    """Get the next real action, running the tools-mode sub-loop if the obs exposes tools.
+
+    Returns ``(action, usage, latency, raw, meta_calls)`` where ``meta_calls`` is the ordered
+    list of query/escalation meta-actions invoked before committing (the router trace) — empty
+    when the strategy committed on the first look.
+    """
     tools_mode = bool(obs.meta.get("tools_mode"))
     handler = obs.meta.get("tool_handler")
     system = SYSTEM_PROMPT + (_META_HELP if tools_mode else "")
     transcript: list[str] = []
+    meta_calls: list[str] = []
     total = Usage()
     latency = 0.0
     last_text = ""
 
-    rounds = max_meta_rounds if tools_mode else 1
+    rounds = obs.meta.get("max_meta_rounds", max_meta_rounds) if tools_mode else 1
     for _ in range(rounds):
         blocks = build_user_blocks(goal, obs, history=history)
         if transcript:
@@ -79,16 +89,17 @@ def decide(
         try:
             action = parse_action(resp.text)
         except ActionParseError:
-            return Action(kind="done"), total, latency, last_text
+            return Action(kind="done"), total, latency, last_text, meta_calls
         if tools_mode and handler is not None and action.kind in META_KINDS:
             result = _run_meta(handler, action)
             label = action.query or action.ref or ""
             transcript.append(f"> {action.kind}({label})\n{result}")
+            meta_calls.append(action.kind)
             continue
-        return action, total, latency, last_text
+        return action, total, latency, last_text, meta_calls
 
     # Ran out of exploration rounds without committing — stop cleanly.
-    return Action(kind="done"), total, latency, last_text
+    return Action(kind="done"), total, latency, last_text, meta_calls
 
 
 def evaluate_live(
@@ -117,7 +128,9 @@ def evaluate_live(
             )
             obs = strat.observe(graph, task_text=handle.goal)
             obs_tokens = token_counter.count_blocks(obs.content_blocks, system=SYSTEM_PROMPT)
-            action, usage, latency, raw = decide(model_client, handle.goal, obs, history)
+            action, usage, latency, raw, meta_calls = decide(
+                model_client, handle.goal, obs, history
+            )
 
             step = StepRecord(
                 step_index=i,
@@ -134,6 +147,7 @@ def evaluate_live(
                 cache_creation_input_tokens=usage.cache_creation_input_tokens,
                 latency_s=latency,
             )
+            step.meta["meta_calls"] = meta_calls
 
             if action.kind == "done":
                 episode.steps.append(step)
@@ -141,7 +155,7 @@ def evaluate_live(
 
             outcome = source.apply(handle, action, obs.ref_registry, graph)
             episode.meta["reward"] = outcome.reward
-            step.meta = {"info": outcome.info, "reward": outcome.reward}
+            step.meta.update({"info": outcome.info, "reward": outcome.reward})
             episode.steps.append(step)
             history.append(_describe_action(action))
             if outcome.terminated:

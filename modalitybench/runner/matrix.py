@@ -12,9 +12,8 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from modalitybench.agents.actions import ActionParseError, parse_action
+from modalitybench.agents.loop import decide
 from modalitybench.agents.model_client import MockClient, ModelClient
-from modalitybench.agents.prompts import SYSTEM_PROMPT, build_user_blocks
 from modalitybench.metrics.recorder import Recorder
 from modalitybench.metrics.tokens import TokenCounter
 from modalitybench.runner.config import ModelConfig, RunConfig
@@ -107,47 +106,43 @@ def evaluate_offline(
             break
         obs = strat.observe(graph, task_text=task.goal)
         obs_tokens = token_counter.count_blocks(obs.content_blocks)
-        blocks = build_user_blocks(task.goal, obs, history=history)
-        resp = model_client.complete(
-            system=SYSTEM_PROMPT, blocks=blocks, tools=obs.tools or None
+        # decide() runs the tools-mode meta-loop (adaptive/tools_mode escalate here) and
+        # sums every meta-round's usage into `usage`; plain serializers commit in one round.
+        action, usage, latency, raw, meta_calls = decide(
+            model_client, task.goal, obs, history
         )
         step = StepRecord(
             step_index=i,
-            action_raw=resp.text,
+            action_kind=action.kind,
+            action={"ref": action.ref, "text": action.text, "value": action.value},
+            action_raw=raw,
             obs_tokens=obs_tokens,
             obs_bytes=obs.meta["bytes"],
             obs_element_count=obs.meta["element_count"],
             obs_has_image=obs.has_image,
-            input_tokens=resp.usage.input_tokens,
-            output_tokens=resp.usage.output_tokens,
-            cache_read_input_tokens=resp.usage.cache_read_input_tokens,
-            cache_creation_input_tokens=resp.usage.cache_creation_input_tokens,
-            latency_s=resp.latency_s,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_read_input_tokens=usage.cache_read_input_tokens,
+            cache_creation_input_tokens=usage.cache_creation_input_tokens,
+            latency_s=latency,
         )
-        try:
-            action = parse_action(resp.text)
-            step.action_kind = action.kind
-            step.action = {"ref": action.ref, "text": action.text, "value": action.value}
-            loc = obs.ref_registry.resolve(action.ref) if action.ref else None
-            pred_backend = str(loc["value"]) if loc else None
-            ele_correct = bool(pred_backend and pred_backend in gt["backend_ids"])
-            op_correct = action.kind == gt["kind"]
-            f1 = action_f1(
-                action.kind, action.text or action.value or "", gt["kind"], gt["value"]
-            )
-            step.correct = ele_correct
-            step.meta = {
-                "op_correct": op_correct,
-                "action_f1": round(f1, 4),
-                "pred_ref": action.ref,
-                "pred_backend": pred_backend,
-                "gt_backend_ids": sorted(gt["backend_ids"]),
-                "gt_op": gt["kind"],
-            }
-        except ActionParseError as exc:
-            step.correct = False
-            step.error = f"parse: {exc}"
-            step.meta = {"op_correct": False, "action_f1": 0.0}
+        loc = obs.ref_registry.resolve(action.ref) if action.ref else None
+        pred_backend = str(loc["value"]) if loc else None
+        ele_correct = bool(pred_backend and pred_backend in gt["backend_ids"])
+        op_correct = action.kind == gt["kind"]
+        f1 = action_f1(
+            action.kind, action.text or action.value or "", gt["kind"], gt["value"]
+        )
+        step.correct = ele_correct
+        step.meta = {
+            "op_correct": op_correct,
+            "action_f1": round(f1, 4),
+            "pred_ref": action.ref,
+            "pred_backend": pred_backend,
+            "gt_backend_ids": sorted(gt["backend_ids"]),
+            "gt_op": gt["kind"],
+            "meta_calls": meta_calls,
+        }
 
         episode.steps.append(step)
         history.append(gt["action_repr"])  # teacher forcing

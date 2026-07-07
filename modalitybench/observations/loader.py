@@ -8,7 +8,7 @@ Call :func:`load_strategies` before using the registry. Kept separate from
 from __future__ import annotations
 
 _LOADED = False
-_STRATEGY_MODULES = ["salience", "tools_mode", "screenshot"]
+_STRATEGY_MODULES = ["salience", "tools_mode", "adaptive", "screenshot"]
 
 
 def load_strategies() -> None:
