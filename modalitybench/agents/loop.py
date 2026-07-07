@@ -61,6 +61,7 @@ def decide(
     history: list[str],
     *,
     max_meta_rounds: int = 6,
+    prior_observations: list[str] | None = None,
 ) -> tuple[Action, Usage, float, str, list[str]]:
     """Get the next real action, running the tools-mode sub-loop if the obs exposes tools.
 
@@ -79,7 +80,9 @@ def decide(
 
     rounds = obs.meta.get("max_meta_rounds", max_meta_rounds) if tools_mode else 1
     for _ in range(rounds):
-        blocks = build_user_blocks(goal, obs, history=history)
+        blocks = build_user_blocks(
+            goal, obs, history=history, prior_observations=prior_observations
+        )
         if transcript:
             blocks.append(TextBlock(text="QUERY RESULTS:\n" + "\n".join(transcript)))
         resp = client.complete(system=system, blocks=blocks, tools=None)
@@ -102,6 +105,16 @@ def decide(
     return Action(kind="done"), total, latency, last_text, meta_calls
 
 
+def _capture(source, handle, strategy_name: str) -> PageGraph:
+    """Capture the current page as a graph. Browser-free sources implement ``capture``;
+    Playwright-backed sources fall back to ``graph_from_page`` over the live page."""
+    from modalitybench.observations.dom_capture import graph_from_page
+
+    if hasattr(source, "capture"):
+        return source.capture(handle, screenshot=_needs_screenshot(strategy_name))
+    return graph_from_page(handle.page, screenshot=_needs_screenshot(strategy_name))
+
+
 def evaluate_live(
     source,
     task: Task,
@@ -109,9 +122,10 @@ def evaluate_live(
     model_client: ModelClient,
     token_counter,
     max_steps: int,
+    *,
+    history_mode: str = "evict",
 ) -> Episode:
     from modalitybench.observations import get_strategy
-    from modalitybench.observations.dom_capture import graph_from_page
     from modalitybench.observations.loader import load_strategies
 
     load_strategies()
@@ -119,17 +133,21 @@ def evaluate_live(
     handle = source.reset(task)
     episode = Episode(task_id=task.task_id, strategy=strategy_name, model=model_client.model)
     episode.meta["reward"] = 0.0
+    episode.meta["history_mode"] = history_mode
     history: list[str] = []
+    # accumulate mode re-sends every prior page's observation to the model each step — the
+    # in-harness "MCP-style" accumulating baseline. evict (default) keeps only action strings,
+    # so per-step context stays flat. This list stays empty in evict mode.
+    prior_obs: list[str] = []
 
     try:
         for i in range(max_steps):
-            graph: PageGraph = graph_from_page(
-                handle.page, screenshot=_needs_screenshot(strategy_name)
-            )
+            graph: PageGraph = _capture(source, handle, strategy_name)
             obs = strat.observe(graph, task_text=handle.goal)
             obs_tokens = token_counter.count_blocks(obs.content_blocks, system=SYSTEM_PROMPT)
             action, usage, latency, raw, meta_calls = decide(
-                model_client, handle.goal, obs, history
+                model_client, handle.goal, obs, history,
+                prior_observations=prior_obs if history_mode == "accumulate" else None,
             )
 
             step = StepRecord(
@@ -150,6 +168,9 @@ def evaluate_live(
             step.meta["meta_calls"] = meta_calls
 
             if action.kind == "done":
+                # Preserve the answer payload so extraction sources can score it (the step
+                # record only carries ref/text/value). None for tasks that don't return one.
+                episode.meta["answer"] = action.answer
                 episode.steps.append(step)
                 break
 
@@ -158,6 +179,10 @@ def evaluate_live(
             step.meta.update({"info": outcome.info, "reward": outcome.reward})
             episode.steps.append(step)
             history.append(_describe_action(action))
+            # In accumulate mode the model keeps seeing every page it has visited — this is
+            # the buffer that grows the context (and the bill) superlinearly over a trajectory.
+            if history_mode == "accumulate":
+                prior_obs.append(f"[page after step {i + 1}]\n{obs.text()}")
             if outcome.terminated:
                 break
     finally:

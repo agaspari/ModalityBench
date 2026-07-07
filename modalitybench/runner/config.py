@@ -41,6 +41,10 @@ class RunConfig(BaseModel):
     results_dir: str = "results"
     token_count: str = "exact"  # "exact" (count_tokens) | "approx" (local heuristic)
     resume: bool = True
+    # Live-loop context lifecycle: "evict" (history = action strings only, flat per-step
+    # context) or "accumulate" (re-send every prior page's observation — the MCP-style
+    # accumulating baseline whose bill grows superlinearly over a trajectory).
+    history_mode: str = "evict"
 
     def cells(self) -> list[tuple[str, ModelConfig]]:
         """Cross-product of strategy x model (task expansion happens in the runner)."""

@@ -23,17 +23,23 @@ def build_user_blocks(
     *,
     history: list[str] | None = None,
     instruction: str | None = None,
+    prior_observations: list[str] | None = None,
 ) -> list[ContentBlock]:
     """Assemble the user-turn content: goal, history, the observation, and a final ask.
 
     The observation's content blocks (text and/or image) are inserted as-is so image
-    strategies work without special-casing.
+    strategies work without special-casing. ``prior_observations`` (accumulate/history mode)
+    re-sends earlier pages' observation text before the current page — the growing context
+    that makes an accumulating agent loop bill superlinearly over a long trajectory.
     """
     header_lines = [f"GOAL: {goal}"]
     if history:
         header_lines.append("\nACTIONS SO FAR:")
         header_lines += [f"  {i + 1}. {h}" for i, h in enumerate(history)]
-    header_lines.append("\nPAGE OBSERVATION:")
+    if prior_observations:
+        header_lines.append("\nEARLIER PAGES YOU HAVE ALREADY SEEN (retain their contents):")
+        header_lines += [f"\n{p}" for p in prior_observations]
+    header_lines.append("\nCURRENT PAGE OBSERVATION:")
     blocks: list[ContentBlock] = [TextBlock(text="\n".join(header_lines))]
     # A serializer can legitimately produce an empty observation (e.g. no visible interactive
     # elements at this page state). Anthropic rejects empty text blocks ("text content blocks

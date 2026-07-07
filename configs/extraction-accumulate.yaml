@@ -1,0 +1,20 @@
+# Build 2 headline — context lifecycle, ACCUMULATE arm (the MCP-style baseline). The live loop
+# re-sends every page the agent has already visited on each step, so cumulative billed input
+# tokens grow ~quadratically in page count. Pair with extraction-evict.yaml (same matrix,
+# history_mode: evict) and compare cumulative input_tokens vs n_pages per strategy.
+#
+# NOTE: run this AFTER extraction-evict so results/ holds both arms for the comparison chart.
+run_id: extraction-accumulate
+strategies: [flat_elements, adaptive, pruned_html]
+models:
+  - name: deepseek-chat
+    max_tokens: 4096
+tasks:
+  source: paginated_extraction
+  options:
+    page_counts: [2, 4, 6, 8]
+    items_per_page: 10
+    seed: 0
+max_steps: 20
+token_count: approx
+history_mode: accumulate

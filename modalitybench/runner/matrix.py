@@ -40,6 +40,10 @@ def build_task_source(cfg) -> TaskSource:
         from modalitybench.tasks.webshop import WebShopSource
 
         return WebShopSource(**opts)
+    if src == "paginated_extraction":
+        from modalitybench.tasks.paginated_extraction import PaginatedExtractionSource
+
+        return PaginatedExtractionSource(**opts)
     raise ValueError(f"unknown task source {src!r}")
 
 
@@ -193,7 +197,8 @@ def run_matrix(config: RunConfig, console: Console | None = None) -> Recorder:
                     from modalitybench.agents.loop import evaluate_live
 
                     episode = evaluate_live(
-                        source, task, strategy, model_client, token_counter, config.max_steps
+                        source, task, strategy, model_client, token_counter, config.max_steps,
+                        history_mode=config.history_mode,
                     )
                 else:
                     episode = evaluate_offline(

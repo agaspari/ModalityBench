@@ -1,0 +1,22 @@
+# Build 2 headline — context lifecycle, EVICT arm. The live loop keeps only action strings
+# between steps, so per-step context stays flat regardless of how many pages were visited.
+# Pair with extraction-accumulate.yaml (identical but history_mode: accumulate) to chart the
+# flat-vs-superlinear cumulative-token curves as page count grows.
+#
+# Browser-free (pages generated + captured via graph_from_html) — no Playwright, runs anywhere.
+# Items are non-interactive text: flat_elements floors (can't see them), adaptive escalates
+# (request_text on each page), pruned_html pays for the text on every page.
+run_id: extraction-evict
+strategies: [flat_elements, adaptive, pruned_html]
+models:
+  - name: deepseek-chat
+    max_tokens: 4096
+tasks:
+  source: paginated_extraction
+  options:
+    page_counts: [2, 4, 6, 8]
+    items_per_page: 10
+    seed: 0
+max_steps: 20
+token_count: approx
+history_mode: evict

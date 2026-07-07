@@ -94,6 +94,11 @@ class MiniWobSource:
         page = env.unwrapped.page
         return _Handle(env=env, page=page, goal=_goal_text(obs))
 
+    def capture(self, handle: _Handle, *, screenshot: bool = False) -> PageGraph:
+        from modalitybench.observations.dom_capture import graph_from_page
+
+        return graph_from_page(handle.page, screenshot=screenshot)
+
     def apply(
         self, handle: _Handle, action: Action, registry: RefRegistry, graph: PageGraph
     ) -> LiveOutcome:
