@@ -1,0 +1,47 @@
+# Live WebArena smoke run across a few observation strategies.
+#
+# WebArena (Zhou et al., ICLR 2024; github.com/web-arena-x/webarena) is the heaviest task
+# source: 812 long-horizon tasks over five self-hosted, dockerized sites. The blocker is
+# INFRA, not code — stand the sites up, then this runs like any other live source.
+#
+# Prerequisites:
+#   1. Bring up the WebArena docker images (shopping, shopping_admin, reddit, gitlab, wikipedia,
+#      map) per their README; note each site's base URL.
+#   2. Export the site base URLs (WebArena's own env var names — the source substitutes the
+#      __SHOPPING__ etc. placeholders from these):
+#        export SHOPPING='http://localhost:7770'
+#        export SHOPPING_ADMIN='http://localhost:7780/admin'
+#        export REDDIT='http://localhost:9999'
+#        export GITLAB='http://localhost:8023'
+#        export WIKIPEDIA='http://localhost:8888/...'
+#        export MAP='http://localhost:3000'
+#        export HOMEPAGE='http://localhost:4399'
+#   3. Generate the config file and log in to capture auth state (WebArena scripts):
+#        python scripts/generate_test_data.py            # writes config_files/test.json
+#        python -m browser_env.auto_login                # writes .auth/*_state.json
+#   4. Point ModalityBench at them and install the browser extra:
+#        pip install 'modalitybench[browser]' && playwright install chromium
+#        export ANTHROPIC_API_KEY=...   (or `ant auth login`)
+#
+# NOTE ON SCORING: string_match / url_match are fully supported; program_html is checked by
+# re-fetching in a fresh authenticated context. fuzzy_match and func: locators are not yet
+# supported and surface as TaskResult.error (never a silent pass) — filter to string/url/
+# program_html tasks for a clean first run, e.g. task_ids or sites below.
+run_id: webarena-smoke
+strategies: [flat_elements, axtree, salience_flat, tools_mode]
+models:
+  - name: claude-sonnet-5
+    max_tokens: 2048
+    thinking: true
+    effort: medium
+tasks:
+  source: webarena
+  options:
+    config_file: ../webarena/config_files/test.json
+    auth_dir: ../webarena/.auth
+    sites: [shopping]        # start with one site; drop to widen
+    limit: 5
+    headless: true
+max_steps: 20                # WebArena trajectories are long — nav + search + read + stop
+token_count: exact
+history_modes: [evict]       # add `accumulate` to measure the context-lifecycle gap

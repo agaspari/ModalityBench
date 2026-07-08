@@ -29,8 +29,14 @@ here as they surface so nothing is lost. Move an item into a phase when it's sch
 - [ ] **WebShop** — self-hosted simulated e-commerce site, ~12k human instructions,
       automatic reward. Heavier setup (needs its dataset + local server). Strong candidate
       right after v1 since the user called it out.
-- [ ] **WebArena** — realistic self-hosted sites (GitLab, shopping, forums, wiki) via Docker.
-      Most realistic; heaviest infra. Best as a later drop-in.
+- [~] **WebArena** — realistic self-hosted sites (GitLab, shopping, forums, wiki) via Docker.
+      Most realistic; heaviest infra. **Code landed** (`tasks/webarena.py`, registered,
+      `configs/webarena-smoke.yaml`): config loading + URL-placeholder substitution + the
+      string_match / url_match / program_html evaluators are implemented and unit-tested
+      (`tests/test_webarena.py`, no infra needed). Remaining before a real run is INFRA (stand up
+      the docker sites, generate `test.json`, capture `.auth` storage-state) plus two eval gaps:
+      `fuzzy_match`/`ua_match` (need an LLM judge) and `func:` program_html locators — both raise
+      `UnsupportedEval` today (surfaced as `TaskResult.error`, never a silent pass).
 - [ ] **WorkArena** — enterprise (ServiceNow) tasks; very large DOMs (40K–500K tokens),
       ideal stress test for reduction techniques.
 - [ ] **Online-Mind2Web (live)** — the live-browsing variant of Mind2Web, complementing the

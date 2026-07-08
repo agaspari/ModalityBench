@@ -40,6 +40,10 @@ def build_task_source(cfg) -> TaskSource:
         from modalitybench.tasks.webshop import WebShopSource
 
         return WebShopSource(**opts)
+    if src == "webarena":
+        from modalitybench.tasks.webarena import WebArenaSource
+
+        return WebArenaSource(**opts)
     if src == "paginated_extraction":
         from modalitybench.tasks.paginated_extraction import PaginatedExtractionSource
 
