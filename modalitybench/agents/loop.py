@@ -105,6 +105,97 @@ def decide(
     return Action(kind="done"), total, latency, last_text, meta_calls
 
 
+def decide_with_guardrail(
+    client: ModelClient,
+    goal: str,
+    obs: Observation,
+    history: list[str],
+    *,
+    tried_actions: set[tuple[str, str | None, str | None]],
+    graph: PageGraph | None = None,
+    max_meta_rounds: int = 6,
+    prior_observations: list[str] | None = None,
+) -> tuple[Action, Usage, float, str, list[str]]:
+    """Decide next action, intercepting redundant actions and auto-escalating to rich text.
+
+    Live-loop only. The interception fires when the model re-proposes an action already in
+    ``tried_actions`` — i.e. it is stuck re-clicking a dead element because the page did not
+    change in response. That failure mode only exists when the agent's action drives the page
+    (evaluate_live). Offline element selection is teacher-forced and force-advances every step,
+    so a redundant-action loop never forms there; evaluate_offline calls plain ``decide``.
+    """
+    action, usage, latency, raw, meta_calls = decide(
+        client, goal, obs, history,
+        max_meta_rounds=max_meta_rounds,
+        prior_observations=prior_observations,
+    )
+
+    if action.kind in {"click", "type", "select"} and action.ref:
+        loc = obs.ref_registry.resolve(action.ref)
+        loc_val = str(loc["value"]) if loc else action.ref
+        action_key = (action.kind, loc_val, action.text or action.value)
+
+        if action_key in tried_actions:
+            # We hit a redundant action loop! Intercept and auto-escalate.
+            from modalitybench.observations.adaptive import _text_leaves, _text_line
+            from modalitybench.observations.base import TextBlock
+
+            # 1. Mask out the redundant element ref
+            new_blocks = []
+            for block in obs.content_blocks:
+                if isinstance(block, TextBlock):
+                    # Filter out the line containing the redundant ref
+                    lines = [line for line in block.text.splitlines() if f"[{action.ref}]" not in line]
+                    new_blocks.append(TextBlock(text="\n".join(lines)))
+                else:
+                    new_blocks.append(block)
+            obs.content_blocks = new_blocks
+
+            # 2. Extract visible static text from graph (auto-escalation)
+            escalation_text = ""
+            if graph:
+                leaves = _text_leaves(graph)
+                if leaves:
+                    escalation_text = "\n".join(_text_line(n) for n in leaves)
+
+            # 3. Add warning and escalation content to observation
+            warning_msg = (
+                f"\n\n[SYSTEM NOTICE: Your previous action {action.kind}({action.ref}) was idempotent "
+                f"or redundant. To assist you, the system has masked that element and automatically "
+                f"retrieved the page's static text below. Select a DIFFERENT action.]\n"
+            )
+            if escalation_text:
+                warning_msg += f"\nPAGE STATIC TEXT:\n{escalation_text}"
+            else:
+                warning_msg += "\n(No static text found on page)"
+
+            obs.content_blocks.append(TextBlock(text=warning_msg))
+
+            # 4. Remove ref from registry to prevent repeated lookup
+            if action.ref in obs.ref_registry._by_ref:
+                del obs.ref_registry._by_ref[action.ref]
+
+            # 5. Re-decide with the enriched, masked observation
+            action, second_usage, second_latency, raw, second_meta = decide(
+                client, goal, obs, history,
+                max_meta_rounds=max_meta_rounds,
+                prior_observations=prior_observations,
+            )
+            usage = usage.add(second_usage)
+            latency += second_latency
+            meta_calls.extend(second_meta)
+            meta_calls.append("guardrail_escalation")
+
+            loc = obs.ref_registry.resolve(action.ref) if action.ref else None
+            loc_val = str(loc["value"]) if loc else (action.ref or "")
+            action_key = (action.kind, loc_val, action.text or action.value)
+
+        tried_actions.add(action_key)
+
+    return action, usage, latency, raw, meta_calls
+
+
+
 def _capture(source, handle, strategy_name: str) -> PageGraph:
     """Capture the current page as a graph. Browser-free sources implement ``capture``;
     Playwright-backed sources fall back to ``graph_from_page`` over the live page."""
@@ -140,13 +231,16 @@ def evaluate_live(
     # so per-step context stays flat. This list stays empty in evict mode.
     prior_obs: list[str] = []
 
+    tried_actions: set[tuple[str, str | None, str | None]] = set()
     try:
         for i in range(max_steps):
             graph: PageGraph = _capture(source, handle, strategy_name)
             obs = strat.observe(graph, task_text=handle.goal)
             obs_tokens = token_counter.count_blocks(obs.content_blocks, system=SYSTEM_PROMPT)
-            action, usage, latency, raw, meta_calls = decide(
+            action, usage, latency, raw, meta_calls = decide_with_guardrail(
                 model_client, handle.goal, obs, history,
+                tried_actions=tried_actions,
+                graph=graph,
                 prior_observations=prior_obs if history_mode == "accumulate" else None,
             )
 

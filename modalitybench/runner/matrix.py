@@ -105,13 +105,17 @@ def evaluate_offline(
     episode = Episode(task_id=task.task_id, strategy=strategy_name, model=model_client.model)
     history: list[str] = []
 
+    # NB: no redundant-action guardrail here. Offline scoring is teacher-forced — every step is
+    # a distinct cached snapshot and the trajectory force-advances regardless of the agent's
+    # action — so the "stuck repeating one action because the page didn't respond" loop the
+    # guardrail intercepts cannot occur. It lives only in evaluate_live (see loop.py).
     for i, (graph, gt) in enumerate(source.snapshots(task)):
         if i >= max_steps:
             break
         obs = strat.observe(graph, task_text=task.goal)
         obs_tokens = token_counter.count_blocks(obs.content_blocks)
-        # decide() runs the tools-mode meta-loop (adaptive/tools_mode escalate here) and
-        # sums every meta-round's usage into `usage`; plain serializers commit in one round.
+        # decide() runs the tools-mode meta-loop (adaptive/tools_mode escalate here) and sums
+        # every meta-round's usage into `usage`; plain serializers commit in one round.
         action, usage, latency, raw, meta_calls = decide(
             model_client, task.goal, obs, history
         )
@@ -183,16 +187,30 @@ def run_matrix(config: RunConfig, console: Console | None = None) -> Recorder:
             modes[model_name] = tc.mode
         return counters[model_name]
 
-    agg: dict[tuple[str, str], list[Any]] = {}
-    for strategy, mcfg in config.cells():
-        model_client = build_model_client(mcfg)
-        model_name = model_client.model
-        token_counter = counter_for(model_name)
-        # history_mode is a live-loop axis (evict vs accumulate); offline is single-step so it
-        # has no trajectory to accumulate — pin it to one mode there.
-        hmodes = config.history_modes if source.is_live else ["evict"]
-        for hmode in hmodes:
-            for task in tasks:
+    # Clients are stateless per call and reused across tasks — build one per model config
+    # (keyed by identity; config.cells() reuses the same ModelConfig objects) rather than
+    # reconstructing on every task × strategy cell.
+    clients: dict[int, ModelClient] = {}
+
+    def client_for(mcfg: ModelConfig) -> ModelClient:
+        key = id(mcfg)
+        if key not in clients:
+            clients[key] = build_model_client(mcfg)
+        return clients[key]
+
+    # Task-major order (task -> strategy -> model): every model/strategy is exercised on the
+    # same task before moving on, so a broken modality shows up in the first task and the run
+    # can be aborted early instead of after a full model's pass.
+    agg: dict[tuple[str, str, str], list[Any]] = {}
+    for task in tasks:
+        for strategy, mcfg in config.cells():
+            model_client = client_for(mcfg)
+            model_name = model_client.model
+            token_counter = counter_for(model_name)
+            # history_mode is a live-loop axis (evict vs accumulate); offline is single-step so it
+            # has no trajectory to accumulate — pin it to one mode there.
+            hmodes = config.history_modes if source.is_live else ["evict"]
+            for hmode in hmodes:
                 tag = f"{strategy}/{model_name}/{hmode}/{task.task_id}"
                 if config.resume and recorder.is_completed(
                     strategy, model_name, task.task_id, hmode

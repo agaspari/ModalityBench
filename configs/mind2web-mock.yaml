@@ -2,7 +2,7 @@
 # Validates capture -> serialize -> score -> record end to end. Accuracy will be ~0 because
 # the mock always clicks e1 — the point is the plumbing, not the score.
 run_id: mind2web-mock
-strategies: [afus, fct, flat_elements, pruned_html, salience_flat, salience_afus, salience_fct, tools_mode]
+strategies: [afus, fct, flat_elements, pruned_html, salience_flat, salience_afus, salience_fct, tools_mode, adaptive]
 models:
   - name: mock
     mock: true

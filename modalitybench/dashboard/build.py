@@ -326,41 +326,45 @@ def build_dashboard(
     #    Missing cells (a strategy that hasn't run a task yet, e.g. mid-run) are coalesced to
     #    0.0 for a fully numeric z — Plotly's categorical heatmap fails axis scaling on nulls —
     #    and left unannotated (cell_n == 0) so they read as blank "not run" rather than a real 0.
-    strategies, tasks_x, z, cell_text, cell_n = _task_matrix(rows, quality_name)
-    # Transpose to tasks-as-rows: with many tasks a tall matrix (a few strategy columns, one
-    # readable horizontal task label per row) scans far better than a wide 2-row strip.
-    ns, nt = len(strategies), len(tasks_x)
-    zT = [[(z[s][t] if z[s][t] is not None else 0.0) for s in range(ns)] for t in range(nt)]
-    textT = [[cell_text[s][t] for s in range(ns)] for t in range(nt)]
-    nT = [[cell_n[s][t] for s in range(ns)] for t in range(nt)]
-    heat = go.Figure(
-        go.Heatmap(
-            z=zT, x=strategies, y=tasks_x, zmin=0, zmax=1, colorscale=_BLUE_SEQ,
-            colorbar=dict(title=quality_name), customdata=nT,
-            hovertemplate="<b>%{y}</b><br>%{x}<br>" + quality_name + "=%{z:.2f}"
-            "<br>n=%{customdata}<extra></extra>",
+    heat_figs = []
+    for model in sorted(models):
+        model_rows = [r for r in rows if r.get("model") == model]
+        strategies, tasks_x, z, cell_text, cell_n = _task_matrix(model_rows, quality_name)
+        # Transpose to tasks-as-rows: with many tasks a tall matrix (a few strategy columns, one
+        # readable horizontal task label per row) scans far better than a wide 2-row strip.
+        ns, nt = len(strategies), len(tasks_x)
+        zT = [[(z[s][t] if z[s][t] is not None else 0.0) for s in range(ns)] for t in range(nt)]
+        textT = [[cell_text[s][t] for s in range(ns)] for t in range(nt)]
+        nT = [[cell_n[s][t] for s in range(ns)] for t in range(nt)]
+        heat = go.Figure(
+            go.Heatmap(
+                z=zT, x=strategies, y=tasks_x, zmin=0, zmax=1, colorscale=_BLUE_SEQ,
+                colorbar=dict(title=quality_name), customdata=nT,
+                hovertemplate="<b>%{y}</b><br>%{x}<br>" + quality_name + "=%{z:.2f}"
+                "<br>n=%{customdata}<extra></extra>",
+            )
         )
-    )
-    anns = [
-        dict(
-            x=strategies[xi], y=tasks_x[yi], text=textT[yi][xi], showarrow=False,
-            font=dict(size=11, color="#ffffff" if zT[yi][xi] > 0.5 else _INK),
+        anns = [
+            dict(
+                x=strategies[xi], y=tasks_x[yi], text=textT[yi][xi], showarrow=False,
+                font=dict(size=11, color="#ffffff" if zT[yi][xi] > 0.5 else _INK),
+            )
+            for yi in range(nt)
+            for xi in range(ns)
+            if nT[yi][xi] > 0
+        ]
+        # Height grows ~30px per task (best-first from the top). A hard floor of 300px keeps the
+        # plot area well clear of the 120px top+bottom margins even for few-task runs — otherwise a
+        # too-short figure collapses the axis and Plotly throws "Something went wrong with axis
+        # scaling" in setScale (seen on 1-2 task smoke runs).
+        heat.update_layout(
+            title=f"Per-task {quality_name} ({model}) — darker = better",
+            annotations=anns, template="plotly_white",
+            height=max(300, 130 + 30 * max(nt, 1)),
+            margin=dict(t=70, l=180, b=50, r=20),
+            yaxis=dict(autorange="reversed"),
         )
-        for yi in range(nt)
-        for xi in range(ns)
-        if nT[yi][xi] > 0
-    ]
-    # Height grows ~30px per task (best-first from the top). A hard floor of 300px keeps the
-    # plot area well clear of the 120px top+bottom margins even for few-task runs — otherwise a
-    # too-short figure collapses the axis and Plotly throws "Something went wrong with axis
-    # scaling" in setScale (seen on 1-2 task smoke runs).
-    heat.update_layout(
-        title=f"Per-task {quality_name} (task × strategy) — darker = better",
-        annotations=anns, template="plotly_white",
-        height=max(300, 130 + 30 * max(nt, 1)),
-        margin=dict(t=70, l=180, b=50, r=20),
-        yaxis=dict(autorange="reversed"),
-    )
+        heat_figs.append(heat)
 
     # 3) The honesty gap: apparent observation size vs real billed input tokens.
     ratios = [(a.input_tokens / a.obs_tokens if a.obs_tokens else 0.0) for a in aggs]
@@ -434,7 +438,7 @@ def build_dashboard(
         curve_figs = [tok_fig, acc_fig]
 
     config = {"displaylogo": False, "toImageButtonOptions": {"format": "svg"}}
-    figs = [pareto, *curve_figs, heat, gap, tokens, cost, latency]
+    figs = [pareto, *curve_figs, *heat_figs, gap, tokens, cost, latency]
     chart_html = []
     for i, fig in enumerate(figs):
         inner = fig.to_html(full_html=False, include_plotlyjs=(i == 0), config=config)

@@ -30,9 +30,12 @@ MODEL_PRICES: dict[str, Price] = {
     "claude-sonnet-5": Price(3.00, 15.00),
     "claude-sonnet-4-6": Price(3.00, 15.00),
     "claude-haiku-4-5": Price(1.00, 5.00),
-    # DeepSeek (api-docs.deepseek.com, cache-miss input) — deepseek-chat == v4-flash non-think.
-    # deepseek-reasoner intentionally omitted (thinking-mode price unverified) → fallback-flagged.
+    # DeepSeek (api-docs.deepseek.com, cache-miss input). Both aliases now map to
+    # deepseek-v4-flash (chat = non-thinking, reasoner = thinking) at identical rates; the
+    # reasoner arm costs more only because thinking emits far more output tokens, not a higher
+    # per-token price. (Legacy R1 reasoner was 0.55/2.19 — no longer current.)
     "deepseek-chat": Price(0.14, 0.28),
+    "deepseek-reasoner": Price(0.14, 0.28),
     # Zhipu GLM (docs.z.ai/guides/overview/pricing).
     "glm-4.6": Price(0.60, 2.20),
     "glm-4.5": Price(0.60, 2.20),

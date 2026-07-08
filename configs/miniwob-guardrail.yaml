@@ -1,0 +1,24 @@
+# MiniWoB live evaluation of system_adaptive vs baseline serializers
+run_id: miniwob-guardrail
+strategies: [flat_elements, axtree, pruned_html, adaptive, system_adaptive]
+models:
+  - name: deepseek-chat
+    max_tokens: 2048
+  - name: deepseek-reasoner
+    max_tokens: 2048
+tasks:
+  source: miniwob
+  options:
+    tasks:
+      # reading / reasoning
+      - read-table
+      - simple-arithmetic
+      - text-transform
+      # interactive anchors
+      - login-user
+      - click-widget
+      - click-button-sequence
+    seeds: [0, 1]
+    headless: true
+max_steps: 15
+token_count: approx

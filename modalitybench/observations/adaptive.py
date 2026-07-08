@@ -94,3 +94,34 @@ class AdaptiveStrategy:
 @register_strategy("adaptive")
 def _make() -> AdaptiveStrategy:
     return AdaptiveStrategy()
+
+
+class SystemAdaptiveStrategy:
+    name = "system_adaptive"
+
+    def observe(self, graph: PageGraph, *, task_text=None) -> Observation:
+        lines = [
+            _line(n)
+            for n in graph.nodes()
+            if n.ref is not None and n.visible and n.is_interactive
+        ]
+        body = "\n".join(lines) if lines else "(no interactive elements visible on this page)"
+
+        reg = build_registry(graph)
+        return Observation(
+            content_blocks=[TextBlock(text=body)],
+            ref_registry=reg,
+            meta={
+                "serializer": self.name,
+                "chars": len(body),
+                "bytes": len(body.encode("utf-8")),
+                "element_count": len(reg),
+                "tools_mode": False,
+            },
+        )
+
+
+@register_strategy("system_adaptive")
+def _make_system() -> SystemAdaptiveStrategy:
+    return SystemAdaptiveStrategy()
+
