@@ -24,9 +24,9 @@
 #        export ANTHROPIC_API_KEY=...   (or `ant auth login`)
 #
 # NOTE ON SCORING: string_match / url_match are fully supported; program_html is checked by
-# re-fetching in a fresh authenticated context. fuzzy_match and func: locators are not yet
-# supported and surface as TaskResult.error (never a silent pass) — filter to string/url/
-# program_html tasks for a clean first run, e.g. task_ids or sites below.
+# re-fetching in a fresh authenticated context. fuzzy_match / ua_match (N/A tasks) are graded
+# by the `judge_model` below (WebArena's own prompts). Only `func:` program_html locators remain
+# unsupported and surface as TaskResult.error (never a silent pass).
 run_id: webarena-smoke
 strategies: [flat_elements, axtree, salience_flat, tools_mode]
 models:
@@ -42,6 +42,7 @@ tasks:
     sites: [shopping]        # start with one site; drop to widen
     limit: 5
     headless: true
+    judge_model: claude-sonnet-5   # grades fuzzy_match / ua_match tasks; omit to leave them unscored
 max_steps: 20                # WebArena trajectories are long — nav + search + read + stop
 token_count: exact
 history_modes: [evict]       # add `accumulate` to measure the context-lifecycle gap

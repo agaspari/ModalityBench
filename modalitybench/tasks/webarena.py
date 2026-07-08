@@ -30,10 +30,12 @@ criteria are server-side (a created issue, an updated cart, a changed profile), 
 context with the same storage-state observes the same state the trajectory produced. Purely
 client-side state would be missed — documented, and none of the WebArena checks rely on it.
 
-**Partially supported.** ``fuzzy_match`` and the "N/A justification" (``ua_match``) checks need
-an LLM judge; ``func:`` program_html locators/urls need WebArena's Python helpers. These raise
-:class:`UnsupportedEval`, surfaced as ``TaskResult.error`` rather than a silent pass — so a run
-over a filtered task subset stays honest about what it actually scored.
+**Judged + partially supported.** ``fuzzy_match`` and the "N/A justification" (``ua_match``)
+checks are graded by an :class:`LLMJudge` when the run sets ``judge_model`` (WebArena's own
+prompts, verbatim); without one they raise :class:`UnsupportedEval`. ``func:`` program_html
+locators/urls need WebArena's Python helpers and always raise. Every :class:`UnsupportedEval`
+surfaces as ``TaskResult.error`` rather than a silent pass — so a run over a filtered task
+subset stays honest about what it actually scored.
 """
 
 from __future__ import annotations
@@ -68,7 +70,80 @@ _AND = " |AND| "
 
 
 class UnsupportedEval(RuntimeError):
-    """An eval feature we haven't implemented (fuzzy_match, ua_match, func: locators)."""
+    """An eval feature we haven't implemented (func: locators)."""
+
+
+# ---------------------------------------------------------------------------
+# LLM judge for fuzzy_match / ua_match (WebArena's llm_fuzzy_match / llm_ua_match)
+# ---------------------------------------------------------------------------
+
+_JUDGE_SYSTEM = "You are a helpful assistant"
+
+
+def _fuzzy_prompt(question: str, reference: str, pred: str) -> str:
+    return (
+        "Help a teacher to grade the answer of a student given a question. Keep in mind that "
+        "the student may use different phrasing or wording to answer the question. The goal is "
+        "to evaluate whether the answer is semantically equivalent to the reference answer.\n"
+        f"question: {question}\nreference answer: {reference}\n"
+        "all the string 'N/A' that you see is a special sequence that means 'not achievable'\n"
+        f"student answer: {pred}\n"
+        "Conclude the judgement by correct/incorrect/partially correct."
+    )
+
+
+def _ua_prompt(question: str, reference: str, pred: str) -> str:
+    return (
+        f"task: {question}\nactual unachievable reason: {reference}\n"
+        f"reported unachievable reason: {pred}\n"
+        "The task described above is inherently unachievable due to the reason specified under "
+        "'actual unachievable reason'. An individual previously attempted this task and was "
+        "unable to complete it. They provided a reason for their failure, which is listed under "
+        "'reported unachievable reason'. Your role is to review both the actual and reported "
+        "reasons. Determine if the reported reason aligns with the actual reason, even if "
+        "implicitly. If the stated reason is in line with the actual reason, respond with "
+        "'same'. Otherwise, respond with 'different'."
+    )
+
+
+def _fuzzy_parse(response: str) -> float:
+    r = response.lower()
+    if "partially correct" in r or "incorrect" in r:
+        return 0.0
+    return 1.0 if "correct" in r else 0.0
+
+
+def _ua_parse(response: str) -> float:
+    r = response.lower()
+    if "different" in r:
+        return 0.0
+    return 1.0 if "same" in r else 0.0
+
+
+class LLMJudge:
+    """WebArena's semantic grader for ``fuzzy_match`` / ``ua_match`` over any ``ModelClient``.
+
+    Faithful to WebArena's prompts and its parse rule (a "partially correct"/"incorrect" verdict
+    scores 0.0, "correct" scores 1.0; "different"/"same" for ua). WebArena grades at
+    temperature 0 with gpt-4; we reuse whatever model the run configures via ``judge_model``,
+    which our clients don't expose a temperature knob for — a documented, minor divergence."""
+
+    def __init__(self, client: Any) -> None:
+        self.client = client
+
+    def _ask(self, prompt: str) -> str:
+        from modalitybench.observations.base import TextBlock
+
+        resp = self.client.complete(
+            system=_JUDGE_SYSTEM, blocks=[TextBlock(text=prompt)], tools=None
+        )
+        return resp.text or ""
+
+    def fuzzy_match(self, question: str, reference: str, pred: str) -> float:
+        return _fuzzy_parse(self._ask(_fuzzy_prompt(question, reference, pred)))
+
+    def ua_match(self, question: str, reference: str, pred: str) -> float:
+        return _ua_parse(self._ask(_ua_prompt(question, reference, pred)))
 
 
 @dataclass
@@ -96,6 +171,7 @@ class WebArenaSource:
         auth_dir: str | None = None,
         headless: bool = True,
         limit: int | None = None,
+        judge_model: str | None = None,
     ) -> None:
         # Source of task configs: a single WebArena ``test.json`` array (config_file) or a
         # directory of ``<id>.json`` files (config_dir). Filter by task_ids / sites; cap with limit.
@@ -106,6 +182,10 @@ class WebArenaSource:
         self.auth_dir = auth_dir
         self.headless = headless
         self.limit = limit
+        # Model that grades fuzzy_match / ua_match tasks (built lazily on first use). None leaves
+        # those tasks as UnsupportedEval rather than silently wrong.
+        self.judge_model = judge_model
+        self._judge: LLMJudge | None = None
         # Final URL per task, recorded during the live loop so score() (which runs after the
         # trajectory browser is closed) can do url_match / program_html "last" without it.
         # The runner is sequential (one cell at a time), so a plain dict is safe.
@@ -196,7 +276,11 @@ class WebArenaSource:
         error: str | None = None
         try:
             if "string_match" in eval_types:
-                s = string_match_score(spec.get("reference_answers", {}), str(answer))
+                s = string_match_score(
+                    spec.get("reference_answers", {}), str(answer),
+                    intent=task.goal, string_note=spec.get("string_note", ""),
+                    judge=self._get_judge(),
+                )
                 metrics["string_match"] = s
                 score *= s
             if "url_match" in eval_types:
@@ -223,6 +307,18 @@ class WebArenaSource:
         )
 
     # -- internals -----------------------------------------------------------
+
+    def _get_judge(self) -> "LLMJudge | None":
+        """Build the fuzzy/ua grader once, reusing the runner's provider-routing. None if the
+        run configured no ``judge_model`` (fuzzy tasks then surface as UnsupportedEval)."""
+        if self.judge_model is None:
+            return None
+        if self._judge is None:
+            from modalitybench.runner.config import ModelConfig
+            from modalitybench.runner.matrix import build_model_client
+
+            self._judge = LLMJudge(build_model_client(ModelConfig(name=self.judge_model)))
+        return self._judge
 
     def _load_configs(self) -> list[dict[str, Any]]:
         if self.config_file:
@@ -331,12 +427,21 @@ def _tokenize(s: str) -> list[str]:
     return re.findall(r"\w+", s.lower())
 
 
-def string_match_score(reference_answers: dict[str, Any], pred: str) -> float:
+def string_match_score(
+    reference_answers: dict[str, Any],
+    pred: str,
+    *,
+    intent: str = "",
+    string_note: str = "",
+    judge: "LLMJudge | None" = None,
+) -> float:
     """Score a final answer against a WebArena ``reference_answers`` spec (product of criteria).
 
-    Supports ``exact_match`` and ``must_include`` fully. ``fuzzy_match`` needs an LLM judge and
-    raises :class:`UnsupportedEval`, except the ``"N/A"`` unachievable-task sentinel, which we
-    accept only on a literal N/A answer (the LLM ``ua_match`` justification path is not run)."""
+    ``exact_match`` / ``must_include`` are pure. ``fuzzy_match`` is graded by ``judge`` (an
+    :class:`LLMJudge`) exactly as WebArena does: each reference is checked with the semantic
+    grader, and the ``"N/A"`` unachievable sentinel short-circuits to 1.0 on a literal ``n/a``
+    answer, else defers to the ``ua_match`` justification grader. Without a ``judge`` those LLM
+    paths raise :class:`UnsupportedEval` (surfaced as ``TaskResult.error``, never a silent pass)."""
     clean_pred = clean_answer(pred)
     score = 1.0
     for approach, value in reference_answers.items():
@@ -351,9 +456,17 @@ def string_match_score(reference_answers: dict[str, Any], pred: str) -> float:
                     score *= float(cref in clean_pred)
         elif approach == "fuzzy_match":
             if value == "N/A":
-                score *= float(clean_pred in ("n/a", "na", "not applicable"))
+                if clean_pred == "n/a":
+                    score *= 1.0
+                elif judge is not None:
+                    score *= judge.ua_match(intent, string_note, pred)
+                else:
+                    raise UnsupportedEval("N/A ua_match needs a judge model")
+            elif judge is not None:
+                for reference in value:
+                    score *= judge.fuzzy_match(intent, str(reference), pred)
             else:
-                raise UnsupportedEval("fuzzy_match needs an LLM judge")
+                raise UnsupportedEval("fuzzy_match needs a judge model")
         else:
             raise UnsupportedEval(f"reference_answers approach {approach!r}")
     return score

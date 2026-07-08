@@ -82,16 +82,78 @@ def test_string_must_include_single_word_tokenized():
     assert string_match_score({"must_include": ["0"]}, "the total is 0 items") == 1.0
 
 
-def test_string_na_sentinel_accepts_only_na_answer():
+def test_string_na_sentinel_short_circuits_on_literal_na():
+    # A literal "n/a" answer passes with no judge; anything else needs the ua_match judge.
     refs = {"fuzzy_match": "N/A"}
     assert string_match_score(refs, "N/A") == 1.0
-    assert string_match_score(refs, "not applicable") == 1.0
-    assert string_match_score(refs, "actually here is an answer") == 0.0
+    with pytest.raises(UnsupportedEval):
+        string_match_score(refs, "not applicable")
 
 
-def test_string_fuzzy_match_unsupported():
+def test_string_fuzzy_match_unsupported_without_judge():
     with pytest.raises(UnsupportedEval):
         string_match_score({"fuzzy_match": ["a paraphrase"]}, "whatever")
+
+
+# -- LLM judge (fuzzy_match / ua_match) -------------------------------------
+
+
+class _FakeJudge:
+    """Records calls and returns scripted verdicts, standing in for LLMJudge."""
+
+    def __init__(self, fuzzy=1.0, ua=1.0):
+        self._fuzzy, self._ua = fuzzy, ua
+        self.calls = []
+
+    def fuzzy_match(self, question, reference, pred):
+        self.calls.append(("fuzzy", question, reference, pred))
+        return self._fuzzy
+
+    def ua_match(self, question, reference, pred):
+        self.calls.append(("ua", question, reference, pred))
+        return self._ua
+
+
+def test_string_fuzzy_match_uses_judge():
+    judge = _FakeJudge(fuzzy=1.0)
+    refs = {"fuzzy_match": ["around noon", "midday"]}
+    assert string_match_score(refs, "12pm", intent="When?", judge=judge) == 1.0
+    # Every reference is graded (product), so both are sent to the judge.
+    assert [c[2] for c in judge.calls] == ["around noon", "midday"]
+    # One failing reference drags the product to 0.
+    assert string_match_score(refs, "12pm", intent="When?", judge=_FakeJudge(fuzzy=0.0)) == 0.0
+
+
+def test_string_na_defers_to_ua_judge():
+    judge = _FakeJudge(ua=1.0)
+    refs = {"fuzzy_match": "N/A"}
+    s = string_match_score(
+        refs, "the site has no such filter", intent="Filter by X", string_note="X unsupported",
+        judge=judge,
+    )
+    assert s == 1.0
+    assert judge.calls[0][0] == "ua" and judge.calls[0][2] == "X unsupported"
+
+
+def test_llm_judge_parses_verdicts():
+    from modalitybench.agents.model_client import MockClient
+    from modalitybench.tasks.webarena import LLMJudge
+
+    def responder(*, system, blocks, tools):
+        text = blocks[0].text.lower()
+        # Distinguish the two prompts by a phrase unique to each.
+        if "grade the answer" in text:
+            return "The answer matches. correct"
+        return "These align. same"
+
+    judge = LLMJudge(MockClient(responder=responder))
+    assert judge.fuzzy_match("q", "ref", "pred") == 1.0
+    assert judge.ua_match("q", "ref", "pred") == 1.0
+
+    judge_bad = LLMJudge(MockClient(responder=lambda **k: "this is incorrect"))
+    assert judge_bad.fuzzy_match("q", "ref", "pred") == 0.0
+    judge_diff = LLMJudge(MockClient(responder=lambda **k: "they are different"))
+    assert judge_diff.ua_match("q", "ref", "pred") == 0.0
 
 
 # -- url match --------------------------------------------------------------
@@ -227,6 +289,20 @@ def test_score_unsupported_eval_surfaces_error_not_pass():
     ep = Episode(task_id="webarena#7", strategy="s", model="m", meta={"answer": "x"})
     res = src.score(_task(spec), ep)
     assert not res.success and res.error and "fuzzy_match" in res.error
+
+
+def test_score_fuzzy_task_with_injected_judge():
+    # A fuzzy_match task is UnsupportedEval without a judge, but scores once one is wired.
+    src = WebArenaSource()
+    spec = {"eval_types": ["string_match"], "reference_answers": {"fuzzy_match": ["noon"]}}
+    ep = Episode(task_id="webarena#7", strategy="s", model="m", meta={"answer": "12pm"})
+    assert src.score(_task(spec), ep).error  # no judge -> surfaced, not a silent pass
+
+    # Wire a judge, bypassing build_model_client: set the name and pre-populate the cache.
+    src.judge_model = "fake"
+    src._judge = _FakeJudge(fuzzy=1.0)
+    res = src.score(_task(spec), ep)
+    assert res.success and res.error is None
 
 
 def test_score_multi_component_is_product():
