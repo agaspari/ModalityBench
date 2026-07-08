@@ -1,0 +1,29 @@
+# Live WebArena run against a LOCAL Reddit (Postmill) — the cheap prove-out.
+#
+# Stand up the site first (see docker/webarena/README.md), then from the repo root:
+#   source docker/webarena/scripts/print-env.sh          # exports REDDIT=http://localhost:9999
+#   python docker/webarena/scripts/capture-auth.py       # REQUIRED — all 129 reddit tasks need login
+#   python -m modalitybench.cli run configs/webarena-reddit.yaml
+#
+# The WebArenaSource loads all 812 raw task configs and filters to sites: [reddit], substituting
+# __REDDIT__ from the REDDIT env var. fuzzy_match / ua_match answer-tasks are graded by
+# judge_model; func: program_html locators (rare) surface as TaskResult.error.
+run_id: webarena-reddit
+strategies: [flat_elements, axtree, salience_flat]
+models:
+  - name: claude-sonnet-5
+    max_tokens: 2048
+    thinking: true
+    effort: medium
+tasks:
+  source: webarena
+  options:
+    config_file: docker/webarena/config_files/test.raw.json
+    auth_dir: docker/webarena/.auth
+    sites: [reddit]
+    limit: 5              # start tiny; raise once a cell or two comes back green
+    headless: true
+    judge_model: claude-sonnet-5
+max_steps: 20
+token_count: exact
+history_modes: [evict]   # add `accumulate` to measure the context-lifecycle gap on live runs

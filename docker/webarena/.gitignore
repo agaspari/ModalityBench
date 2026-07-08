@@ -1,0 +1,5 @@
+# Multi-GB image tars, captured auth cookies, and the big WebArena task file stay out of git.
+downloads/
+.auth/
+config_files/
+.env

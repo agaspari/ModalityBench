@@ -1,0 +1,17 @@
+# WebArena site harness — Reddit (Postmill) only, for the local prove-out.
+#
+# The forum image is small and light enough to run in Docker Desktop on a laptop, so you can
+# validate the entire WebArenaSource -> live loop -> scoring path at $0 before deciding on a
+# paid VM. Heavier sites (shopping, gitlab, …) are intentionally left out here; add them on a
+# VM with the disk/RAM to spare (see README.md).
+#
+# The image is loaded from a downloaded tar (scripts/load-images.sh), never pulled from a
+# registry — hence pull_policy: never.
+services:
+  forum:
+    image: postmill-populated-exposed-withimg
+    container_name: forum
+    pull_policy: never
+    ports:
+      - "${REDDIT_PORT:-9999}:80"
+    restart: unless-stopped
