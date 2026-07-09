@@ -1,29 +1,39 @@
-# Live WebArena run against a LOCAL Reddit (Postmill) — the cheap prove-out.
+# Live WebArena run against a LOCAL Reddit (Postmill) — the cheap prove-out, on DeepSeek.
+#
+# All-DeepSeek so you only need DEEPSEEK_API_KEY (agent + fuzzy/ua judge both deepseek-chat),
+# and it's ~100x cheaper than Sonnet/Opus for the first shakeout. Re-run the final ranking on a
+# stronger model once the pipeline is proven.
 #
 # Stand up the site first (see docker/webarena/README.md), then from the repo root:
-#   source docker/webarena/scripts/print-env.sh          # exports REDDIT=http://localhost:9999
-#   python docker/webarena/scripts/capture-auth.py       # REQUIRED — all 129 reddit tasks need login
+#   .\docker\webarena\scripts\up.ps1                       # (bash: ./scripts/up.sh)
+#   $env:REDDIT = "http://localhost:9999"                  # or put REDDIT=... in the root .env
+#   python docker/webarena/scripts/capture-auth.py         # REQUIRED — all 129 reddit tasks need login
 #   python -m modalitybench.cli run configs/webarena-reddit.yaml
 #
-# The WebArenaSource loads all 812 raw task configs and filters to sites: [reddit], substituting
-# __REDDIT__ from the REDDIT env var. fuzzy_match / ua_match answer-tasks are graded by
-# judge_model; func: program_html locators (rare) surface as TaskResult.error.
+# Prerequisites:  pip install -e '.[browser,providers]' && playwright install chromium
+#                 export DEEPSEEK_API_KEY=...   (or DEEPSEEK_API_KEY=... in the root .env)
+#
+# Notes:
+#   - Text strategies only — DeepSeek's chat model has no vision, so no screenshot arm here.
+#   - token_count is `approx`: no exact tokenizer is wired for DeepSeek, and observation *size*
+#     ranking is tokenizer-invariant. Real billed tokens still come back in `usage`.
+#   - The WebArenaSource loads all 812 raw task configs and filters to sites: [reddit],
+#     substituting __REDDIT__ from the REDDIT env var. fuzzy_match / ua_match answer-tasks are
+#     graded by judge_model; the rare func: program_html locators surface as TaskResult.error.
 run_id: webarena-reddit
 strategies: [flat_elements, axtree, salience_flat]
 models:
-  - name: claude-sonnet-5
+  - name: deepseek-chat        # routed to the OpenAI-compatible client (DeepSeek base URL)
     max_tokens: 2048
-    thinking: true
-    effort: medium
 tasks:
   source: webarena
   options:
     config_file: docker/webarena/config_files/test.raw.json
     auth_dir: docker/webarena/.auth
     sites: [reddit]
-    limit: 5              # start tiny; raise once a cell or two comes back green
+    limit: 5                   # start tiny; raise once a cell or two comes back green
     headless: true
-    judge_model: claude-sonnet-5
+    judge_model: deepseek-chat
 max_steps: 20
-token_count: exact
-history_modes: [evict]   # add `accumulate` to measure the context-lifecycle gap on live runs
+token_count: approx
+history_modes: [evict]         # add `accumulate` to measure the context-lifecycle gap on live runs

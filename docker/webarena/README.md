@@ -1,35 +1,48 @@
-# WebArena site harness (local prove-out: Reddit only)
+# WebArena site harness (Reddit only)
 
 Stands up the WebArena **Reddit / forum (Postmill)** site in Docker so ModalityBench can drive
-real long-horizon tasks against it. Reddit is small and light enough to run in Docker Desktop
-on a laptop, so you can validate the whole live path — `WebArenaSource` → agent loop →
-evict-vs-accumulate → scoring — at **$0** before committing to a paid VM for the heavier sites.
+real long-horizon tasks against it. Reddit is the lightest WebArena site (~129 tasks), so it's
+the cheapest way to validate the whole live path — `WebArenaSource` → agent loop →
+evict-vs-accumulate → scoring — before standing up a VM for the heavier sites.
 
 Everything here is written so the same files drop onto a Linux VM unchanged; the heavier sites
 are left out of `docker-compose.yml` on purpose (see *Scaling up* below).
 
+> ⚠️ **Requires an amd64 / x86-64 host.** The WebArena images are published **amd64-only**. On an
+> ARM64 machine (Apple Silicon, Windows-on-ARM) Docker runs them under QEMU emulation, where the
+> Postmill PHP workers crash with `QEMU internal SIGILL` — the site never stays up. Use an
+> amd64 desktop or an amd64 cloud VM. The image is ~50 GB ("withimg" = populated with post
+> images), so the one-time `docker load` takes a while and needs ~60 GB of free disk.
+
 ## Prerequisites
-- Docker Desktop (Compose v2). `docker compose version` should work.
+- An **amd64 host** (see the warning above) with Docker Desktop / Engine (Compose v2).
+  `docker compose version` should work.
 - The `[browser]` extra + Chromium for the auth capture and the run:
   `pip install -e '.[browser]' && playwright install chromium`
 - An API key for the model + judge (e.g. `ANTHROPIC_API_KEY`).
+
+> **Windows:** use the `.ps1` scripts from **PowerShell** (not cmd.exe). Every `.sh` below has a
+> `.ps1` twin — e.g. `.\scripts\download-images.ps1`. On macOS/Linux use the `.sh` versions from
+> bash. `capture-auth.py` is plain Python and works on both.
 
 ## One-time setup
 Run from this directory (`docker/webarena/`); scripts `cd` to their own location.
 
 ```bash
-./scripts/download-images.sh     # ~a few GB from the CMU mirror (resumable)
-./scripts/load-images.sh         # docker load the tar
-./scripts/fetch-config.sh        # WebArena's test.raw.json (all 812 tasks; we filter to reddit)
+# bash (macOS/Linux/Git Bash)            # PowerShell (Windows)
+./scripts/download-images.sh             # .\scripts\download-images.ps1   (~few GB, resumable)
+./scripts/load-images.sh                 # .\scripts\load-images.ps1
+./scripts/fetch-config.sh                # .\scripts\fetch-config.ps1
 ```
 
 ## Each session
 ```bash
-./scripts/up.sh                              # start forum + wait until it serves
+# bash                                   # PowerShell
+./scripts/up.sh                          # .\scripts\up.ps1
 # from the repo root:
-source docker/webarena/scripts/print-env.sh     # exports REDDIT=http://localhost:9999
-python docker/webarena/scripts/capture-auth.py  # REQUIRED: all 129 reddit tasks are login-gated
-python -m modalitybench.cli run configs/webarena-reddit.yaml
+source docker/webarena/scripts/print-env.sh          # . docker\webarena\scripts\print-env.ps1
+python docker/webarena/scripts/capture-auth.py       # (same) REQUIRED — reddit tasks need login
+python -m modalitybench.cli run configs/webarena-reddit.yaml   # (same)
 ```
 
 All 129 reddit tasks are login-gated and most (117) are scored by `program_html`, which
